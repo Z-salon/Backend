@@ -1,0 +1,20 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_routes_1 = __importDefault(require("../modules/auth/routes/auth.routes"));
+const invitation_routes_1 = __importDefault(require("../modules/invitation/routes/invitation.routes"));
+const member_routes_1 = __importDefault(require("../modules/business/routes/member.routes"));
+const role_routes_1 = __importDefault(require("../modules/role/routes/role.routes"));
+const env_1 = require("../config/env");
+const router = (0, express_1.Router)();
+router.use(`${env_1.config.apiPrefix}/auth`, auth_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, invitation_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, member_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, role_routes_1.default);
+router.get('/health', (req, res) => {
+    res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
+});
+exports.default = router;

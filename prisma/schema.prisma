@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+}
+
+enum BusinessStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum MemberStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum RoleType {
+  SYSTEM
+  CUSTOM
+}
+
+enum RoleScopeType {
+  BUSINESS
+  BRANCH
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum OtpPurpose {
+  LOGIN
+  REGISTRATION
+  PASSWORD_RESET
+  PHONE_VERIFICATION
+  INVITATION_ACCEPTANCE
+  PHONE_CHANGE
+}
+
+enum OtpStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  LOCKED
+  CONSUMED
+}
+
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+model User {
+  id                String    @id @default(uuid())
+  phone             String    @unique
+  passwordHash      String?
+  phoneVerifiedAt   DateTime?
+  status            UserStatus @default(PENDING_VERIFICATION)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  memberships       BusinessMember[]
+  sessions          Session[]
+  otpChallenges     OtpChallenge[]
+  acceptedInvitations BusinessInvitation[] @relation("AcceptedInvitations")
+
+  @@index([phone])
+  @@index([status])
+}
+
+model Business {
+  id          String         @id @default(uuid())
+  name        String
+  currency    String         @default("ETB")
+  timezone    String         @default("Africa/Addis_Ababa")
+  status      BusinessStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  members     BusinessMember[]
+  roles       Role[]
+  invitations BusinessInvitation[]
+  branches    Branch[]
+
+  @@index([status])
+}
+
+model Branch {
+  id          String   @id @default(uuid())
+  businessId  String
+  name        String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userRoleBranches     UserRoleBranch[]
+  invitationRoleBranches InvitationRoleBranch[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@index([isActive])
+}
+
+model BusinessMember {
+  id            String       @id @default(uuid())
+  businessId    String
+  userId        String
+  status        MemberStatus @default(INVITED)
+  invitedAt     DateTime     @default(now())
+  joinedAt      DateTime?
+  suspendedAt   DateTime?
+  removedAt     DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userRoles     UserRole[]
+  sentInvitations BusinessInvitation[] @relation("SentInvitations")
+
+  @@unique([businessId, userId])
+  @@index([businessId])
+  @@index([userId])
+  @@index([status])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  module      String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rolePermissions RolePermission[]
+}
+
+model Role {
+  id            String     @id @default(uuid())
+  businessId    String
+  name          String
+  description   String?
+  type          RoleType   @default(CUSTOM)
+  systemKey     String?
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  business      Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  permissions   RolePermission[]
+  userRoles     UserRole[]
+  invitationRoles InvitationRole[]
+
+  @@unique([businessId, name])
+  @@unique([businessId, systemKey])
+  @@index([businessId])
+  @@index([systemKey])
+  @@index([isActive])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  id                String         @id @default(uuid())
+  businessMemberId  String
+  roleId            String
+  scopeType         RoleScopeType  @default(BUSINESS)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  businessMember    BusinessMember @relation(fields: [businessMemberId], references: [id], onDelete: Cascade)
+  role              Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branches          UserRoleBranch[]
+
+  @@index([businessMemberId])
+  @@index([roleId])
+  @@index([scopeType])
+}
+
+model UserRoleBranch {
+  userRoleId String
+  branchId   String
+
+  userRole   UserRole @relation(fields: [userRoleId], references: [id], onDelete: Cascade)
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userRoleId, branchId])
+}
+
+model RegistrationRequest {
+  id            String    @id @default(uuid())
+  phone         String    @unique
+  passwordHash  String
+  businessName  String
+  currency      String
+  timezone      String
+  status        String    @default("PENDING")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  expiresAt     DateTime?
+
+  @@index([phone])
+  @@index([status])
+}
+
+model OtpChallenge {
+  id                     String       @id @default(uuid())
+  phone                  String
+  purpose                OtpPurpose
+  otpHash                String
+  verificationTokenHash  String?
+  status                 OtpStatus    @default(PENDING)
+  attemptCount           Int          @default(0)
+  maxAttempts            Int          @default(5)
+  expiresAt              DateTime
+  verifiedAt             DateTime?
+  consumedAt             DateTime?
+  requestIp              String?
+  userAgent              String?
+  userId                 String?
+  user                   User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt              DateTime     @default(now())
+
+  @@index([phone, purpose, status])
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+model Session {
+  id              String        @id @default(uuid())
+  userId          String
+  refreshTokenHash String
+  status          SessionStatus @default(ACTIVE)
+  deviceName      String?
+  userAgent       String?
+  ipAddress       String?
+  expiresAt       DateTime
+  lastUsedAt      DateTime      @default(now())
+  revokedAt       DateTime?
+  revokeReason    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([refreshTokenHash])
+}
+
+model BusinessInvitation {
+  id                  String             @id @default(uuid())
+  businessId          String
+  phone               String
+  status              InvitationStatus   @default(PENDING)
+  expiresAt           DateTime
+  invitedAt           DateTime           @default(now())
+  acceptedAt          DateTime?
+  revokedAt           DateTime?
+  invitedByMemberId   String
+  acceptedByUserId    String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invitedByMember     BusinessMember     @relation("SentInvitations", fields: [invitedByMemberId], references: [id], onDelete: Cascade)
+  acceptedByUser      User?              @relation("AcceptedInvitations", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+  roles               InvitationRole[]
+
+  @@index([businessId])
+  @@index([phone])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([invitedByMemberId])
+}
+
+model InvitationRole {
+  id            String            @id @default(uuid())
+  invitationId  String
+  roleId        String
+  scopeType     RoleScopeType     @default(BUSINESS)
+  createdAt     DateTime          @default(now())
+
+  invitation    BusinessInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  role          Role              @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branches      InvitationRoleBranch[]
+
+  @@index([invitationId])
+  @@index([roleId])
+  @@index([scopeType])
+}
+
+model InvitationRoleBranch {
+  invitationRoleId String
+  branchId         String
+
+  invitationRole   InvitationRole @relation(fields: [invitationRoleId], references: [id], onDelete: Cascade)
+  branch           Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([invitationRoleId, branchId])
+}
