@@ -33,7 +33,7 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customSiteTitle: 'Z-Salon API Docs',
 }));
 
-app.use(routes);
+app.use(config.apiPrefix, routes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

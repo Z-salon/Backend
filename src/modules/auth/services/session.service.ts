@@ -19,6 +19,19 @@ export class SessionService {
     userAgent?: string,
     ipAddress?: string
   ): Promise<SessionData> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, status: true },
+    });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found', ErrorCodes.USER_NOT_FOUND);
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new ApiError(403, 'User account is suspended', ErrorCodes.USER_SUSPENDED);
+    }
+
     const sessionId = randomBytes(16).toString('hex');
     const refreshToken = generateRefreshToken(userId, sessionId);
     const refreshTokenHash = hashOtp(refreshToken);

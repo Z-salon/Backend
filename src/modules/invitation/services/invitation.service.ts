@@ -2,6 +2,7 @@ import { prisma } from '../../../libs/prisma';
 import { otpService } from '../../../modules/auth/services/otp.service';
 import { normalizePhone } from '../../../utils/phone';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
+import { hashVerificationToken } from '../../../libs/otp';
 
 export interface CreateInvitationData {
   businessId: string;
@@ -102,34 +103,21 @@ export class InvitationService {
         }
       }
 
-      await otpService.requestOtp(normalizedPhone, 'INVITATION_ACCEPTANCE');
-
       return invitation;
     });
   }
 
   async acceptInvitation(
     phone: string,
-    verificationToken: string
-  ): Promise<{ businessId: string; memberId: string }> {
+    invitationId?: string,
+    verificationToken?: string,
+    authUserId?: string
+  ): Promise<{ businessId: string; memberId: string; invitationId: string }> {
     const normalizedPhone = normalizePhone(phone);
-
-    const challenge = await prisma.otpChallenge.findFirst({
-      where: {
-        phone: normalizedPhone,
-        purpose: 'INVITATION_ACCEPTANCE',
-        status: 'VERIFIED',
-      },
-      orderBy: { verifiedAt: 'desc' },
-    });
-
-    if (!challenge) {
-      throw new ApiError(400, 'Invalid or expired verification token', ErrorCodes.OTP_INVALID);
-    }
 
     const invitation = await prisma.businessInvitation.findFirst({
       where: {
-        phone: normalizedPhone,
+        ...(invitationId ? { id: invitationId } : { phone: normalizedPhone }),
         status: 'PENDING',
       },
       include: {
@@ -146,10 +134,6 @@ export class InvitationService {
       throw new ApiError(404, 'No pending invitation found', ErrorCodes.INVITATION_NOT_FOUND);
     }
 
-    if (invitation.status !== 'PENDING') {
-      throw new ApiError(400, 'Invitation is not pending', ErrorCodes.INVITATION_ALREADY_ACCEPTED);
-    }
-
     if (invitation.expiresAt < new Date()) {
       await prisma.businessInvitation.update({
         where: { id: invitation.id },
@@ -162,26 +146,54 @@ export class InvitationService {
       throw new ApiError(403, 'Business is not active', ErrorCodes.BUSINESS_SUSPENDED);
     }
 
-    return prisma.$transaction(async (tx) => {
-      let user = await tx.user.findUnique({
-        where: { phone: normalizedPhone },
+    let challenge: { id: string } | null = null;
+
+    if (authUserId) {
+      const authUser = await prisma.user.findUnique({
+        where: { id: authUserId },
+        select: { id: true, phone: true, status: true },
       });
 
-      if (!user) {
-        user = await tx.user.create({
-          data: {
-            phone: normalizedPhone,
-            phoneVerifiedAt: new Date(),
-            status: 'ACTIVE',
-          },
-        });
-      } else if (user.status !== 'ACTIVE') {
+      if (!authUser) {
+        throw new ApiError(401, 'Authenticated user not found', ErrorCodes.USER_NOT_FOUND);
+      }
+
+      if (authUser.status !== 'ACTIVE') {
         throw new ApiError(403, 'User account is suspended', ErrorCodes.USER_SUSPENDED);
-      } else {
-        await tx.user.update({
-          where: { id: user.id },
-          data: { phoneVerifiedAt: new Date() },
-        });
+      }
+
+      if (authUser.phone !== normalizedPhone) {
+        throw new ApiError(403, 'Invitation phone does not match the authenticated user', ErrorCodes.INVITATION_PHONE_MISMATCH);
+      }
+    } else if (verificationToken) {
+      challenge = await prisma.otpChallenge.findFirst({
+        where: {
+          phone: normalizedPhone,
+          purpose: 'INVITATION_ACCEPTANCE',
+          status: 'VERIFIED',
+          verificationTokenHash: hashVerificationToken(verificationToken),
+        },
+        select: { id: true },
+      });
+
+      if (!challenge) {
+        throw new ApiError(400, 'Invalid or expired verification token', ErrorCodes.OTP_INVALID);
+      }
+    } else {
+      throw new ApiError(401, 'Authentication required to accept an invitation. Please log in or complete the invitation registration flow.', ErrorCodes.UNAUTHORIZED);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const user = authUserId
+        ? await tx.user.findUnique({ where: { id: authUserId } })
+        : await tx.user.findUnique({ where: { phone: normalizedPhone } });
+
+      if (!user) {
+        throw new ApiError(404, 'User not found. Please complete the invitation registration flow first.', ErrorCodes.USER_NOT_FOUND);
+      }
+
+      if (user.status !== 'ACTIVE') {
+        throw new ApiError(403, 'User account is suspended', ErrorCodes.USER_SUSPENDED);
       }
 
       const existingMember = await tx.businessMember.findUnique({
@@ -214,21 +226,39 @@ export class InvitationService {
       }
 
       for (const invRole of invitation.roles) {
-        const userRole = await tx.userRole.create({
-          data: {
+        let userRole = await tx.userRole.findFirst({
+          where: {
             businessMemberId: member.id,
             roleId: invRole.roleId,
             scopeType: invRole.scopeType,
           },
         });
 
-        if (invRole.scopeType === 'BRANCH' && invRole.branches.length > 0) {
-          await tx.userRoleBranch.createMany({
-            data: invRole.branches.map((b: { branchId: any; }) => ({
-              userRoleId: userRole.id,
-              branchId: b.branchId,
-            })),
+        if (!userRole) {
+          userRole = await tx.userRole.create({
+            data: {
+              businessMemberId: member.id,
+              roleId: invRole.roleId,
+              scopeType: invRole.scopeType,
+            },
           });
+        }
+
+        if (invRole.scopeType === 'BRANCH' && invRole.branches.length > 0) {
+          const existingBranchLinks = await tx.userRoleBranch.findMany({
+            where: { userRoleId: userRole.id },
+            select: { branchId: true },
+          });
+          const existingBranchIds = new Set(existingBranchLinks.map(link => link.branchId));
+          const newBranchLinks = invRole.branches
+            .filter(branch => !existingBranchIds.has(branch.branchId))
+            .map(branch => ({ userRoleId: userRole.id, branchId: branch.branchId }));
+
+          if (newBranchLinks.length > 0) {
+            await tx.userRoleBranch.createMany({
+              data: newBranchLinks,
+            });
+          }
         }
       }
 
@@ -241,12 +271,14 @@ export class InvitationService {
         },
       });
 
-      await tx.otpChallenge.update({
-        where: { id: challenge.id },
-        data: { status: 'CONSUMED' },
-      });
+      if (challenge) {
+        await tx.otpChallenge.update({
+          where: { id: challenge.id },
+          data: { status: 'CONSUMED' },
+        });
+      }
 
-      return { businessId: invitation.businessId, memberId: member.id };
+      return { businessId: invitation.businessId, memberId: member.id, invitationId: invitation.id };
     });
   }
 

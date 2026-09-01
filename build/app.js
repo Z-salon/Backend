@@ -41,7 +41,7 @@ app.use('/docs', swagger_ui_express_1.default.serve, swagger_ui_express_1.defaul
     explorer: true,
     customSiteTitle: 'Z-Salon API Docs',
 }));
-app.use(routes_1.default);
+app.use(env_1.config.apiPrefix, routes_1.default);
 app.use(error_handler_1.notFoundHandler);
 app.use(error_handler_1.errorHandler);
 function startServer() {

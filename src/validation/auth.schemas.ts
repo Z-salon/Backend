@@ -94,10 +94,17 @@ export const invitationCreateSchema = z.object({
   path: ['roles'],
 });
 
-export const invitationAcceptSchema = z.object({
+export const invitationRegisterSchema = z.object({
   phone: phoneSchema,
-  verificationToken: z.string().min(1, 'Verification token is required'),
-});
+  password: passwordSchema,
+  invitationId: z.string().uuid('Invalid invitation ID').optional(),
+}).strict();
+
+export const invitationAcceptSchema = z.object({
+  invitationId: z.string().uuid('Invalid invitation ID').optional(),
+  phone: phoneSchema,
+  verificationToken: z.string().min(1, 'Verification token is required').optional(),
+}).strict();
 
 export const memberUpdateSchema = z.object({
   // Add allowed member update fields here

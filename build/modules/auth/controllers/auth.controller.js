@@ -44,15 +44,74 @@ class AuthController {
     register(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const { phone, verificationToken, business } = req.body;
-                const result = yield auth_service_1.authService.register({ phone, verificationToken, business });
+                const { phone, password, business } = req.body;
+                yield auth_service_1.authService.register({ phone, password, business });
+                res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    registerInvitation(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { phone, password } = req.body;
+                yield auth_service_1.authService.registerInvitation({ phone, password });
+                res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    registerVerify(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { phone, otp } = req.body;
+                const deviceName = req.get('x-device-name');
+                const userAgent = req.get('user-agent');
+                const ipAddress = req.ip || req.socket.remoteAddress;
+                const result = yield auth_service_1.authService.registerVerify(phone, otp, {
+                    deviceName,
+                    userAgent,
+                    ipAddress,
+                });
                 res.cookie('refreshToken', result.refreshToken, {
                     httpOnly: true,
                     secure: process.env.NODE_ENV === 'production',
                     sameSite: 'lax',
-                    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+                    maxAge: 30 * 24 * 60 * 60 * 1000,
                 });
-                res.status(201).json((0, api_response_1.successResponse)('Registration successful', {
+                res.json((0, api_response_1.successResponse)('Registration successful', {
+                    accessToken: result.accessToken,
+                    user: result.user,
+                }));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    login(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { phone, password } = req.body;
+                const deviceName = req.get('x-device-name');
+                const userAgent = req.get('user-agent');
+                const ipAddress = req.ip || req.socket.remoteAddress;
+                const result = yield auth_service_1.authService.login(phone, password, {
+                    deviceName,
+                    userAgent,
+                    ipAddress,
+                });
+                res.cookie('refreshToken', result.refreshToken, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'lax',
+                    maxAge: 30 * 24 * 60 * 60 * 1000,
+                });
+                res.json((0, api_response_1.successResponse)('Login successful', {
                     accessToken: result.accessToken,
                     user: result.user,
                 }));
@@ -84,6 +143,104 @@ class AuthController {
                     accessToken: result.accessToken,
                     user: result.user,
                 }));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    forgotPassword(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { phone } = req.body;
+                const result = yield auth_service_1.authService.requestPasswordReset(phone);
+                res.json((0, api_response_1.successResponse)(result.message));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    verifyPasswordReset(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { phone, otp } = req.body;
+                const result = yield auth_service_1.authService.verifyPasswordReset(phone, otp);
+                res.json((0, api_response_1.successResponse)('Password reset OTP verified', result));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    resetPassword(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { passwordResetToken, newPassword } = req.body;
+                yield auth_service_1.authService.resetPassword(passwordResetToken, newPassword);
+                res.json((0, api_response_1.successResponse)('Password reset successfully. Please log in again.'));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    changePassword(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                if (!req.auth) {
+                    res.status(401).json({ success: false, message: 'Authentication required', code: 'UNAUTHORIZED' });
+                    return;
+                }
+                const { currentPassword, newPassword } = req.body;
+                yield auth_service_1.authService.changePassword(req.auth.userId, currentPassword, newPassword);
+                res.json((0, api_response_1.successResponse)('Password changed successfully'));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    changePhoneRequest(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                if (!req.auth) {
+                    res.status(401).json({ success: false, message: 'Authentication required', code: 'UNAUTHORIZED' });
+                    return;
+                }
+                const { currentPassword, newPhone } = req.body;
+                yield auth_service_1.authService.changePhoneRequest(req.auth.userId, currentPassword, newPhone);
+                res.json((0, api_response_1.successResponse)('If the new phone is valid, a verification code has been sent.'));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    changePhoneVerify(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                if (!req.auth) {
+                    res.status(401).json({ success: false, message: 'Authentication required', code: 'UNAUTHORIZED' });
+                    return;
+                }
+                const { newPhone, otp } = req.body;
+                yield auth_service_1.authService.changePhoneVerify(req.auth.userId, newPhone, otp);
+                res.json((0, api_response_1.successResponse)('Phone number updated successfully'));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
+    resendOtp(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { phone, purpose } = req.body;
+                const ip = req.ip || req.socket.remoteAddress;
+                const userAgent = req.get('user-agent');
+                yield otp_service_1.otpService.requestOtp(phone, purpose, ip, userAgent);
+                res.json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
             }
             catch (error) {
                 next(error);

@@ -27,7 +27,7 @@ const router = (0, express_1.Router)();
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/OtpRequest'
+ *             $ref: '#/components/schemas/InvitationCreateRequest'
  *     responses:
  *       201:
  *         description: Invitation created successfully
@@ -81,16 +81,16 @@ router.delete('/businesses/:businessId/invitations/:invitationId', authenticate_
  * /api/v1/invitations/accept:
  *   post:
  *     tags: [Invitations]
- *     summary: Accept an invitation with verification token
+ *     summary: Accept an invitation with a verification token
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/OtpVerify'
+ *             $ref: '#/components/schemas/InvitationAcceptRequest'
  *     responses:
  *       200:
  *         description: Invitation accepted successfully
  */
-router.post('/invitations/accept', (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationAcceptSchema), invitation_controller_1.invitationController.acceptInvitation.bind(invitation_controller_1.invitationController));
+router.post('/invitations/accept', authenticate_1.optionalAuth, (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationAcceptSchema), invitation_controller_1.invitationController.acceptInvitation.bind(invitation_controller_1.invitationController));
 exports.default = router;

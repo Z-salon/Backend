@@ -18,6 +18,16 @@ const api_error_1 = require("../../../utils/api-error");
 class SessionService {
     createSession(userId, deviceName, userAgent, ipAddress) {
         return __awaiter(this, void 0, void 0, function* () {
+            const user = yield prisma_1.prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, status: true },
+            });
+            if (!user) {
+                throw new api_error_1.ApiError(404, 'User not found', api_error_1.ErrorCodes.USER_NOT_FOUND);
+            }
+            if (user.status !== 'ACTIVE') {
+                throw new api_error_1.ApiError(403, 'User account is suspended', api_error_1.ErrorCodes.USER_SUSPENDED);
+            }
             const sessionId = (0, crypto_1.randomBytes)(16).toString('hex');
             const refreshToken = (0, jwt_1.generateRefreshToken)(userId, sessionId);
             const refreshTokenHash = (0, otp_1.hashOtp)(refreshToken);

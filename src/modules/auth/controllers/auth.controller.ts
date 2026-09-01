@@ -46,6 +46,18 @@ export class AuthController {
     }
   }
 
+  async registerInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { phone, password } = req.body;
+
+      await authService.registerInvitation({ phone, password });
+
+      res.status(201).json(successResponse('If this phone number is eligible, a verification code has been sent.'));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async registerVerify(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { phone, otp } = req.body;

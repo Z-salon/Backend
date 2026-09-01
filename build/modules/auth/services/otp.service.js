@@ -84,6 +84,7 @@ class OtpService {
                     status: 'VERIFIED',
                     verifiedAt: new Date(),
                     consumedAt: new Date(),
+                    verificationTokenHash,
                 },
             });
             return verificationToken;

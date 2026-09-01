@@ -7,10 +7,10 @@ import { config } from '../config/env';
 
 const router = Router();
 
-router.use(`${config.apiPrefix}/auth`, authRoutes);
-router.use(`${config.apiPrefix}`, invitationRoutes);
-router.use(`${config.apiPrefix}`, memberRoutes);
-router.use(`${config.apiPrefix}`, roleRoutes);
+router.use(`/auth`, authRoutes);
+router.use(`/`, invitationRoutes);
+router.use(`/`, memberRoutes);
+router.use(`/`, roleRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });

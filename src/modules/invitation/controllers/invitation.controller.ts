@@ -24,9 +24,10 @@ export class InvitationController {
 
   async acceptInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { phone, verificationToken } = req.body;
+      const { phone, invitationId, verificationToken } = req.body;
+      const authUserId = req.auth?.userId;
 
-      const result = await invitationService.acceptInvitation(phone, verificationToken);
+      const result = await invitationService.acceptInvitation(phone, invitationId, verificationToken, authUserId);
 
       res.json(successResponse('Invitation accepted successfully', result));
     } catch (error) {

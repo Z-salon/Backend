@@ -65,6 +65,30 @@ export class AuthService {
     await otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
   }
 
+  async registerInvitation(data: { phone: string; password: string }): Promise<void> {
+    const normalizedPhone = normalizePhone(data.phone);
+
+    const existingUser = await prisma.user.findUnique({
+      where: { phone: normalizedPhone },
+    });
+
+    if (existingUser) {
+      throw new ApiError(409, 'User already exists. Please log in to accept the invitation.', ErrorCodes.USER_ALREADY_EXISTS);
+    }
+
+    const passwordHash = await argon2.hash(data.password);
+
+    await prisma.user.create({
+      data: {
+        phone: normalizedPhone,
+        passwordHash,
+        status: 'PENDING_VERIFICATION',
+      },
+    });
+
+    await otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+  }
+
   async registerVerify(phone: string, otp: string, deviceInfo?: { deviceName?: string; userAgent?: string; ipAddress?: string }): Promise<AuthResult> {
     const normalizedPhone = normalizePhone(phone);
 
@@ -81,15 +105,24 @@ export class AuthService {
       throw new ApiError(400, 'Invalid or expired verification token', ErrorCodes.OTP_INVALID);
     }
 
-    return prisma.$transaction(async (tx) => {
-      let user = await tx.user.findUnique({
+    // const result = await prisma.$transaction(async (tx) => {
+      let user = await prisma.user.findUnique({
         where: { phone: normalizedPhone },
       });
 
       if (!user) {
-        user = await tx.user.create({
+        user = await prisma.user.create({
           data: {
             phone: normalizedPhone,
+            passwordHash: registrationRequest.passwordHash,
+            phoneVerifiedAt: new Date(),
+            status: 'ACTIVE',
+          },
+        });
+      } else if (user.status === 'PENDING_VERIFICATION') {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
             passwordHash: registrationRequest.passwordHash,
             phoneVerifiedAt: new Date(),
             status: 'ACTIVE',
@@ -101,7 +134,7 @@ export class AuthService {
         throw new ApiError(403, 'User account is suspended', ErrorCodes.USER_SUSPENDED);
       }
 
-      const business = await tx.business.create({
+      const business = await prisma.business.create({
         data: {
           name: registrationRequest.businessName,
           currency: registrationRequest.currency,
@@ -110,7 +143,7 @@ export class AuthService {
         },
       });
 
-      await tx.branch.create({
+      await prisma.branch.create({
         data: {
           businessId: business.id,
           name: 'Main Branch',
@@ -118,7 +151,7 @@ export class AuthService {
         },
       });
 
-      const member = await tx.businessMember.create({
+      const member = await prisma.businessMember.create({
         data: {
           businessId: business.id,
           userId: user.id,
@@ -127,26 +160,36 @@ export class AuthService {
         },
       });
 
-      await this.createDefaultRolesAndPermissions(tx, business.id, member.id);
-      await tx.registrationRequest.delete({ where: { id: registrationRequest.id } });
+      
+      
 
-      const session = await sessionService.createSession(
-        user.id,
-        deviceInfo?.deviceName,
-        deviceInfo?.userAgent,
-        deviceInfo?.ipAddress
-      );
+      // return {
+      //   user: {
+      //     id: user.id,
+      //     phone: user.phone,
+      //     phoneVerifiedAt: user.phoneVerifiedAt,
+      //   },
+      //   memberId: member.id,
+      //   businessId: business.id,
+      // };
+    // );
 
-      return {
-        user: {
-          id: user.id,
-          phone: user.phone,
-          phoneVerifiedAt: user.phoneVerifiedAt,
-        },
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-      };
-    });
+    await this.createDefaultRolesAndPermissions(prisma,business.id, member.id);
+
+    await prisma.registrationRequest.delete({ where: { id: registrationRequest.id } });
+
+    const session = await sessionService.createSession(
+      user.id,
+      deviceInfo?.deviceName,
+      deviceInfo?.userAgent,
+      deviceInfo?.ipAddress
+    );
+
+    return {
+      user: user,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+    };
   }
 
   async login(phone: string, password: string, deviceInfo?: { deviceName?: string; userAgent?: string; ipAddress?: string }): Promise<AuthResult> {
@@ -312,6 +355,77 @@ export class AuthService {
     });
   }
 
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user || !user.passwordHash) {
+      throw new ApiError(401, 'Current password is invalid.', ErrorCodes.INVALID_CREDENTIALS);
+    }
+
+    const currentPasswordValid = await argon2.verify(user.passwordHash, currentPassword);
+    if (!currentPasswordValid) {
+      throw new ApiError(401, 'Current password is invalid.', ErrorCodes.INVALID_CREDENTIALS);
+    }
+
+    const passwordHash = await argon2.hash(newPassword);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      });
+
+      await tx.session.updateMany({
+        where: { userId, status: 'ACTIVE' },
+        data: {
+          status: 'REVOKED',
+          revokedAt: new Date(),
+          revokeReason: 'Password changed on another device',
+        },
+      });
+    });
+  }
+
+  async changePhoneRequest(userId: string, currentPassword: string, newPhone: string): Promise<void> {
+    const normalizedPhone = normalizePhone(newPhone);
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user || !user.passwordHash) {
+      throw new ApiError(401, 'Current password is invalid.', ErrorCodes.INVALID_CREDENTIALS);
+    }
+
+    const isValid = await argon2.verify(user.passwordHash, currentPassword);
+    if (!isValid) {
+      throw new ApiError(401, 'Current password is invalid.', ErrorCodes.INVALID_CREDENTIALS);
+    }
+
+    const duplicateUser = await prisma.user.findUnique({ where: { phone: normalizedPhone } });
+    if (duplicateUser && duplicateUser.id !== userId) {
+      throw new ApiError(409, 'Phone number is already in use.', ErrorCodes.USER_ALREADY_EXISTS);
+    }
+
+    await otpService.requestOtp(normalizedPhone, 'PHONE_CHANGE');
+  }
+
+  async changePhoneVerify(userId: string, newPhone: string, otp: string): Promise<void> {
+    const normalizedPhone = normalizePhone(newPhone);
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found', ErrorCodes.USER_NOT_FOUND);
+    }
+
+    await otpService.verifyOtp(normalizedPhone, otp, 'PHONE_CHANGE');
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        phone: normalizedPhone,
+        phoneVerifiedAt: new Date(),
+      },
+    });
+  }
+
   async getMe(userId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -346,77 +460,206 @@ export class AuthService {
   }
 
   private async createDefaultRolesAndPermissions(
-    tx: any,
-    businessId: string,
-    ownerMemberId: string
-  ): Promise<void> {
-    const permissions = await tx.permission.findMany({
-      select: { id: true, code: true },
-    });
+  tx: any,
+  businessId: string,
+  ownerMemberId: string
+): Promise<void> {
 
-    const permissionMap = new Map<string, string>(permissions.map((p: { code: string; id: string }) => [p.code, p.id]));
-    const allPermissionCodes = Array.from(permissionMap.keys());
+  // Get seeded permissions
+  const permissions = await tx.permission.findMany({
+    select: {
+      id: true,
+      code: true,
+    },
+  });
 
-    const defaultRoles = [
-      { name: 'Owner', systemKey: 'OWNER', description: 'Business owner with full access', permissionCodes: allPermissionCodes },
-      { name: 'Admin', systemKey: 'ADMIN', description: 'Business administrator', permissionCodes: allPermissionCodes.filter((c: string) => !['FINANCE_REFUND', 'FINANCE_ADJUSTMENT'].includes(c)) },
-      { name: 'Branch Manager', systemKey: 'BRANCH_MANAGER', description: 'Manages a specific branch', permissionCodes: [
-        'BOOKING_VIEW', 'BOOKING_CREATE', 'BOOKING_UPDATE', 'BOOKING_CANCEL', 'BOOKING_CHECK_IN',
-        'BOOKING_START', 'BOOKING_COMPLETE', 'BOOKING_MARK_NO_SHOW', 'BOOKING_MANAGE_WAITLIST',
-        'CUSTOMER_VIEW', 'CUSTOMER_CREATE', 'CUSTOMER_UPDATE',
-        'STAFF_VIEW', 'STAFF_MANAGE_SCHEDULE',
-        'SERVICE_VIEW',
-        'BRANCH_VIEW',
-        'FINANCE_VIEW',
-      ]},
-      { name: 'Receptionist', systemKey: 'RECEPTIONIST', description: 'Front desk receptionist', permissionCodes: [
-        'BOOKING_VIEW', 'BOOKING_CREATE', 'BOOKING_UPDATE', 'BOOKING_CANCEL', 'BOOKING_CHECK_IN',
-        'CUSTOMER_VIEW', 'CUSTOMER_CREATE', 'CUSTOMER_UPDATE',
-        'SERVICE_VIEW',
+  const permissionMap = new Map<string, string>(
+    permissions.map((p: { code: string; id: string }) => [
+      p.code,
+      p.id,
+    ])
+  );
+
+  const allPermissionCodes = Array.from(permissionMap.keys());
+
+
+  // ==========================================
+  // DEFAULT BUSINESS ROLES
+  // ==========================================
+
+  const defaultRoles = [
+    {
+      name: 'Owner',
+      systemKey: 'OWNER',
+      description: 'Business owner with full access',
+      permissionCodes: allPermissionCodes,
+    },
+
+    {
+      name: 'Admin',
+      systemKey: 'ADMIN',
+      description: 'Business administrator',
+      permissionCodes: allPermissionCodes.filter(
+        (code: string) =>
+          ![
+            'FINANCE_REFUND',
+            'FINANCE_ADJUSTMENT',
+          ].includes(code)
+      ),
+    },
+
+    {
+      name: 'Branch Manager',
+      systemKey: 'BRANCH_MANAGER',
+      description: 'Manages a specific branch',
+      permissionCodes: [
+        'BOOKING_VIEW',
+        'BOOKING_CREATE',
+        'BOOKING_UPDATE',
+        'BOOKING_CANCEL',
+        'BOOKING_CHECK_IN',
+        'BOOKING_START',
+        'BOOKING_COMPLETE',
+        'BOOKING_MARK_NO_SHOW',
+        'BOOKING_MANAGE_WAITLIST',
+
+        'CUSTOMER_VIEW',
+        'CUSTOMER_CREATE',
+        'CUSTOMER_UPDATE',
+
         'STAFF_VIEW',
-      ]},
-    ];
+        'STAFF_MANAGE_SCHEDULE',
 
-    const createdRoles = [];
+        'SERVICE_VIEW',
 
-    for (const roleData of defaultRoles) {
-      const role = await tx.role.create({
-        data: {
+        'BRANCH_VIEW',
+
+        'FINANCE_VIEW',
+      ],
+    },
+
+    {
+      name: 'Receptionist',
+      systemKey: 'RECEPTIONIST',
+      description: 'Front desk receptionist',
+      permissionCodes: [
+        'BOOKING_VIEW',
+        'BOOKING_CREATE',
+        'BOOKING_UPDATE',
+        'BOOKING_CANCEL',
+        'BOOKING_CHECK_IN',
+
+        'CUSTOMER_VIEW',
+        'CUSTOMER_CREATE',
+        'CUSTOMER_UPDATE',
+
+        'SERVICE_VIEW',
+
+        'STAFF_VIEW',
+      ],
+    },
+  ];
+
+
+  // ==========================================
+  // CREATE ROLES + PERMISSIONS
+  // ==========================================
+
+  const createdRoles: {
+    role: { id: string };
+    systemKey: string;
+  }[] = [];
+
+
+  for (const roleData of defaultRoles) {
+
+    // 1. Create role
+    const role = await tx.role.upsert({
+      where: {
+        businessId_systemKey: {
           businessId,
-          name: roleData.name,
-          description: roleData.description,
-          type: 'SYSTEM',
           systemKey: roleData.systemKey,
-          isActive: true,
         },
-      });
+      },
 
-      const permissionIds = roleData.permissionCodes
-        .map(code => permissionMap.get(code))
-        .filter((id): id is string => id !== undefined);
+      update: {
+        name: roleData.name,
+        description: roleData.description,
+        type: 'SYSTEM',
+        isActive: true,
+      },
 
-      if (permissionIds.length > 0) {
-        await tx.rolePermission.createMany({
-          data: permissionIds.map(permissionId => ({
-            roleId: role.id,
-            permissionId,
-          })),
-        });
-      }
-
-      createdRoles.push({ role, systemKey: roleData.systemKey });
-    }
-
-    const ownerRole = createdRoles.find(r => r.systemKey === 'OWNER')!.role;
-
-    await tx.userRole.create({
-      data: {
-        businessMemberId: ownerMemberId,
-        roleId: ownerRole.id,
-        scopeType: 'BUSINESS',
+      create: {
+        businessId,
+        name: roleData.name,
+        description: roleData.description,
+        type: 'SYSTEM',
+        systemKey: roleData.systemKey,
+        isActive: true,
       },
     });
-  }
-}
 
+
+    // 2. Validate permissions
+    const missingPermissions = roleData.permissionCodes.filter(
+      (code) => !permissionMap.has(code)
+    );
+
+    if (missingPermissions.length > 0) {
+      throw new Error(
+        `Missing permissions for role ${roleData.systemKey}: ` +
+        missingPermissions.join(', ')
+      );
+    }
+
+
+    // 3. Convert codes to IDs
+    const permissionIds = roleData.permissionCodes.map(
+      (code) => permissionMap.get(code)!
+    );
+
+
+    // 4. Insert relationships in ONE query
+    if (permissionIds.length > 0) {
+
+      await tx.rolePermission.createMany({
+        data: permissionIds.map((permissionId) => ({
+          roleId: role.id,
+          permissionId,
+        })),
+
+        skipDuplicates: true,
+      });
+    }
+
+
+    createdRoles.push({
+      role,
+      systemKey: roleData.systemKey,
+    });
+  }
+
+
+  // ==========================================
+  // ASSIGN OWNER ROLE
+  // ==========================================
+
+  const ownerRole = createdRoles.find(
+    (r) => r.systemKey === 'OWNER'
+  )?.role;
+
+  if (!ownerRole) {
+    throw new Error('Owner role was not created');
+  }
+
+
+  await tx.userRole.create({
+    data: {
+      businessMemberId: ownerMemberId,
+      roleId: ownerRole.id,
+      scopeType: 'BUSINESS',
+    },
+  });
+}
+}
 export const authService = new AuthService();

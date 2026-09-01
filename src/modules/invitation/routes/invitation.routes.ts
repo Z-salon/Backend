@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { invitationController } from '../controllers/invitation.controller';
-import { authenticate } from '../../../middlewares/authenticate';
+import { authenticate, optionalAuth } from '../../../middlewares/authenticate';
 import { requireBusinessMembership } from '../../../middlewares/require-business-membership';
 import { requirePermission } from '../../../middlewares/require-permission';
 import { bodyValidator } from '../../../utils/body-validator';
@@ -27,7 +27,7 @@ const router = Router();
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/OtpRequest'
+ *             $ref: '#/components/schemas/InvitationCreateRequest'
  *     responses:
  *       201:
  *         description: Invitation created successfully
@@ -103,19 +103,20 @@ router.delete(
  * /api/v1/invitations/accept:
  *   post:
  *     tags: [Invitations]
- *     summary: Accept an invitation with verification token
+ *     summary: Accept an invitation with a verification token
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/OtpVerify'
+ *             $ref: '#/components/schemas/InvitationAcceptRequest'
  *     responses:
  *       200:
  *         description: Invitation accepted successfully
  */
 router.post(
   '/invitations/accept',
+  optionalAuth,
   bodyValidator(invitationAcceptSchema),
   invitationController.acceptInvitation.bind(invitationController)
 );

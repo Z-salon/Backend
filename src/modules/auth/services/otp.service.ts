@@ -8,7 +8,7 @@ import { config } from '../../../config/env';
 export class OtpService {
   async requestOtp(
     phone: string,
-    purpose: 'LOGIN' | 'REGISTRATION' | 'INVITATION_ACCEPTANCE' | 'PHONE_CHANGE',
+    purpose: 'LOGIN' | 'REGISTRATION' | 'PASSWORD_RESET' | 'PHONE_VERIFICATION' | 'INVITATION_ACCEPTANCE' | 'PHONE_CHANGE',
     ip?: string,
     userAgent?: string
   ): Promise<void> {
@@ -42,7 +42,7 @@ export class OtpService {
   async verifyOtp(
     phone: string,
     otp: string,
-    purpose: 'LOGIN' | 'REGISTRATION' | 'INVITATION_ACCEPTANCE' | 'PHONE_CHANGE'
+    purpose: 'LOGIN' | 'REGISTRATION' | 'PASSWORD_RESET' | 'PHONE_VERIFICATION' | 'INVITATION_ACCEPTANCE' | 'PHONE_CHANGE'
   ): Promise<string> {
     const normalizedPhone = normalizePhone(phone);
 
@@ -94,6 +94,7 @@ export class OtpService {
         status: 'VERIFIED',
         verifiedAt: new Date(),
         consumedAt: new Date(),
+        verificationTokenHash,
       },
     });
 
