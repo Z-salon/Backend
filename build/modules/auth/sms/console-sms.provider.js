@@ -25,6 +25,19 @@ class ConsoleSmsProvider {
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         });
     }
+    sendInvitationLink(phone, invitationUrl) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (env_1.config.isProduction) {
+                console.warn('⚠️ ConsoleSmsProvider should not be used in production');
+                return;
+            }
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.log('📱 Invitation SMS (Development Mode)');
+            console.log(`📞 To: ${phone}`);
+            console.log(`🔗 Invite link: ${invitationUrl}`);
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        });
+    }
 }
 exports.ConsoleSmsProvider = ConsoleSmsProvider;
 // Future implementation for production SMS providers

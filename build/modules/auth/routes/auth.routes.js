@@ -59,7 +59,7 @@ router.post('/otp/verify', (0, body_validator_1.bodyValidator)(auth_schemas_1.ot
 router.post('/register', (0, body_validator_1.bodyValidator)(auth_schemas_1.registerSchema), auth_controller_1.authController.register.bind(auth_controller_1.authController));
 /**
  * @openapi
- * /api/v1/auth/register/invitation:
+ * /api/v1/auth/register/{invitationToken}/invitation:
  *   post:
  *     tags: [Auth]
  *     summary: Register a new invited user account before accepting an invitation
@@ -73,7 +73,7 @@ router.post('/register', (0, body_validator_1.bodyValidator)(auth_schemas_1.regi
  *       201:
  *         description: Invitation registration request created successfully
  */
-router.post('/register/invitation', (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationRegisterSchema), auth_controller_1.authController.registerInvitation.bind(auth_controller_1.authController));
+router.post('/register/{invitationToken}/invitation', (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationRegisterSchema), auth_controller_1.authController.registerInvitation.bind(auth_controller_1.authController));
 /**
  * @openapi
  * /api/v1/auth/register/verify:

@@ -35,6 +35,25 @@ const router = (0, express_1.Router)();
 router.post('/businesses/:businessId/invitations', authenticate_1.authenticate, require_business_membership_1.requireBusinessMembership, (0, require_permission_1.requirePermission)('MEMBER_INVITE'), (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationCreateSchema), invitation_controller_1.invitationController.createInvitation.bind(invitation_controller_1.invitationController));
 /**
  * @openapi
+ * /api/v1/invitations/{invitationToken}/details:
+ *   get:
+ *     tags: [Invitations]
+ *     summary: Get details of an invitation
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: invitationToken
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Invitations retrieved successfully
+ */
+router.get('/invitations/{invitationToken}/details', authenticate_1.authenticate, require_business_membership_1.requireBusinessMembership, (0, require_permission_1.requirePermission)('MEMBER_INVITE'), invitation_controller_1.invitationController.getInvitationDetails.bind(invitation_controller_1.invitationController));
+/**
+ * @openapi
  * /api/v1/businesses/{businessId}/invitations:
  *   get:
  *     tags: [Invitations]
@@ -78,7 +97,7 @@ router.get('/businesses/:businessId/invitations', authenticate_1.authenticate, r
 router.delete('/businesses/:businessId/invitations/:invitationId', authenticate_1.authenticate, require_business_membership_1.requireBusinessMembership, (0, require_permission_1.requirePermission)('MEMBER_INVITE'), invitation_controller_1.invitationController.revokeInvitation.bind(invitation_controller_1.invitationController));
 /**
  * @openapi
- * /api/v1/invitations/accept:
+ * /api/v1/invitations/{invitationToken}/accept:
  *   post:
  *     tags: [Invitations]
  *     summary: Accept an invitation with a verification token
@@ -92,5 +111,5 @@ router.delete('/businesses/:businessId/invitations/:invitationId', authenticate_
  *       200:
  *         description: Invitation accepted successfully
  */
-router.post('/invitations/accept', authenticate_1.optionalAuth, (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationAcceptSchema), invitation_controller_1.invitationController.acceptInvitation.bind(invitation_controller_1.invitationController));
+router.post('/invitations/{invitationToken}/accept', authenticate_1.optionalAuth, (0, body_validator_1.bodyValidator)(auth_schemas_1.invitationAcceptSchema), invitation_controller_1.invitationController.acceptInvitation.bind(invitation_controller_1.invitationController));
 exports.default = router;

@@ -56,8 +56,9 @@ class AuthController {
     registerInvitation(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const { phone, password } = req.body;
-                yield auth_service_1.authService.registerInvitation({ phone, password });
+                const { password } = req.body;
+                const { invitationToken } = req.params;
+                yield auth_service_1.authService.registerInvitation(invitationToken, { password });
                 res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
             }
             catch (error) {

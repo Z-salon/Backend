@@ -54,16 +54,112 @@ class AuthService {
             yield otp_service_1.otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
         });
     }
-    registerInvitation(data) {
+    registerInvitation(invitationToken, data) {
         return __awaiter(this, void 0, void 0, function* () {
-            const normalizedPhone = (0, phone_1.normalizePhone)(data.phone);
+            // ============================================================
+            // 1. Validate password
+            // ============================================================
+            if (!data.password ||
+                data.password.length < 8) {
+                throw new api_error_1.ApiError(400, 'Password must be at least 8 characters long', api_error_1.ErrorCodes.BAD_REQUEST);
+            }
+            // ============================================================
+            // 2. Hash invitation token
+            // ============================================================
+            const tokenHash = (0, otp_1.hashVerificationToken)(invitationToken);
+            // ============================================================
+            // 3. Find invitation
+            // ============================================================
+            const invitation = yield prisma_1.prisma.businessInvitation.findUnique({
+                where: {
+                    tokenHash,
+                },
+                select: {
+                    id: true,
+                    phone: true,
+                    status: true,
+                    expiresAt: true,
+                    business: {
+                        select: {
+                            id: true,
+                            status: true,
+                        },
+                    },
+                },
+            });
+            // ============================================================
+            // 4. Invitation not found
+            // ============================================================
+            if (!invitation) {
+                throw new api_error_1.ApiError(404, 'Invitation not found', api_error_1.ErrorCodes.INVITATION_NOT_FOUND);
+            }
+            // ============================================================
+            // 5. Invitation status
+            // ============================================================
+            if (invitation.status ===
+                'ACCEPTED') {
+                throw new api_error_1.ApiError(409, 'This invitation has already been accepted', api_error_1.ErrorCodes.CONFLICT);
+            }
+            if (invitation.status ===
+                'REVOKED') {
+                throw new api_error_1.ApiError(410, 'This invitation has been revoked', api_error_1.ErrorCodes.INVITATION_REVOKED);
+            }
+            // ============================================================
+            // 6. Expiration
+            // ============================================================
+            if (invitation.expiresAt <=
+                new Date()) {
+                if (invitation.status ===
+                    'PENDING') {
+                    yield prisma_1.prisma.businessInvitation.update({
+                        where: {
+                            id: invitation.id,
+                        },
+                        data: {
+                            status: 'EXPIRED',
+                        },
+                    });
+                }
+                throw new api_error_1.ApiError(410, 'Invitation has expired', api_error_1.ErrorCodes.INVITATION_EXPIRED);
+            }
+            // ============================================================
+            // 7. Business must still be active
+            // ============================================================
+            if (invitation.business.status !==
+                'ACTIVE') {
+                throw new api_error_1.ApiError(403, 'Business is no longer active', api_error_1.ErrorCodes.BUSINESS_SUSPENDED);
+            }
+            // ============================================================
+            // 8. Phone comes ONLY from invitation
+            // ============================================================
+            const normalizedPhone = (0, phone_1.normalizePhone)(invitation.phone);
+            // ============================================================
+            // 9. Check whether user already exists
+            // ============================================================
             const existingUser = yield prisma_1.prisma.user.findUnique({
-                where: { phone: normalizedPhone },
+                where: {
+                    phone: normalizedPhone,
+                },
+                select: {
+                    id: true,
+                    status: true,
+                },
             });
             if (existingUser) {
-                throw new api_error_1.ApiError(409, 'User already exists. Please log in to accept the invitation.', api_error_1.ErrorCodes.USER_ALREADY_EXISTS);
+                throw new api_error_1.ApiError(409, 'An account already exists for this invitation. Please log in to accept the invitation.', api_error_1.ErrorCodes.USER_ALREADY_EXISTS);
             }
+            // ============================================================
+            // 10. Hash password
+            // ============================================================
             const passwordHash = yield argon2_1.default.hash(data.password);
+            // ============================================================
+            // 11. Create user + request OTP
+            // ============================================================
+            //
+            // IMPORTANT:
+            // Do not put otpService.requestOtp()
+            // inside a Prisma transaction if it sends SMS.
+            //
             yield prisma_1.prisma.user.create({
                 data: {
                     phone: normalizedPhone,
@@ -71,7 +167,17 @@ class AuthService {
                     status: 'PENDING_VERIFICATION',
                 },
             });
+            // ============================================================
+            // 12. Request OTP
+            // ============================================================
             yield otp_service_1.otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+            // ============================================================
+            // 13. Return
+            // ============================================================
+            return {
+                message: 'Registration started. Please verify your phone number using the OTP.',
+                phone: normalizedPhone,
+            };
         });
     }
     registerVerify(phone, otp, deviceInfo) {
@@ -114,12 +220,19 @@ class AuthService {
             if (user.status !== 'ACTIVE') {
                 throw new api_error_1.ApiError(403, 'User account is suspended', api_error_1.ErrorCodes.USER_SUSPENDED);
             }
+            const slug = registrationRequest.businessName
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/(^-|-$)/g, '')
+                + '-' + Date.now().toString(36);
             const business = yield prisma_1.prisma.business.create({
                 data: {
                     name: registrationRequest.businessName,
+                    slug,
                     currency: registrationRequest.currency,
                     timezone: registrationRequest.timezone,
                     status: 'ACTIVE',
+                    owner_id: user.id,
                 },
             });
             yield prisma_1.prisma.branch.create({
@@ -165,6 +278,9 @@ class AuthService {
             });
             if (!user || !user.passwordHash) {
                 throw new api_error_1.ApiError(401, 'Invalid phone number or password.', api_error_1.ErrorCodes.INVALID_CREDENTIALS);
+            }
+            if (user.status === 'PENDING_VERIFICATION') {
+                throw new api_error_1.ApiError(403, 'Please verify your phone number before logging in', api_error_1.ErrorCodes.PHONE_NOT_VERIFIED);
             }
             if (user.status !== 'ACTIVE') {
                 throw new api_error_1.ApiError(403, 'User account is suspended', api_error_1.ErrorCodes.USER_SUSPENDED);

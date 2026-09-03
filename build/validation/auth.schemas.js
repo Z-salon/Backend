@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
+exports.businessBrandingSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
 const zod_1 = require("zod");
 exports.phoneSchema = zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)');
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
@@ -80,13 +80,9 @@ exports.invitationCreateSchema = zod_1.z.object({
     path: ['roles'],
 });
 exports.invitationRegisterSchema = zod_1.z.object({
-    phone: exports.phoneSchema,
     password: exports.passwordSchema,
-    invitationId: zod_1.z.string().uuid('Invalid invitation ID').optional(),
 }).strict();
 exports.invitationAcceptSchema = zod_1.z.object({
-    invitationId: zod_1.z.string().uuid('Invalid invitation ID').optional(),
-    phone: exports.phoneSchema,
     verificationToken: zod_1.z.string().min(1, 'Verification token is required').optional(),
 }).strict();
 exports.memberUpdateSchema = zod_1.z.object({
@@ -120,4 +116,29 @@ exports.roleAssignmentSchema = zod_1.z.object({
 }, {
     message: 'BUSINESS scope requires no branchIds; BRANCH scope requires at least one branchId',
     path: ['branchIds'],
+});
+exports.businessUpdateSchema = zod_1.z.object({
+    name: zod_1.z.string().min(1).max(100).optional(),
+    currency: zod_1.z.string().length(3).optional(),
+    timezone: zod_1.z.string().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided for update',
+});
+exports.businessBrandingSchema = zod_1.z.object({
+    logoUrl: zod_1.z.string().url().nullable().optional(),
+    coverImageUrl: zod_1.z.string().url().nullable().optional(),
+    primaryColor: zod_1.z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #FF0000)').nullable().optional(),
+    secondaryColor: zod_1.z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #00FF00)').nullable().optional(),
+    description: zod_1.z.string().max(1000).nullable().optional(),
+    aboutUs: zod_1.z.string().max(5000).nullable().optional(),
+    address: zod_1.z.string().max(500).nullable().optional(),
+    phone: zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)').nullable().optional(),
+    email: zod_1.z.string().email().nullable().optional(),
+    website: zod_1.z.string().url().nullable().optional(),
+    facebookUrl: zod_1.z.string().url().nullable().optional(),
+    instagramUrl: zod_1.z.string().url().nullable().optional(),
+    telegramUrl: zod_1.z.string().url().nullable().optional(),
+    tiktokUrl: zod_1.z.string().url().nullable().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided for update',
 });

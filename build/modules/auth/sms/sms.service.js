@@ -11,6 +11,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSmsProvider = getSmsProvider;
 exports.sendOtpSms = sendOtpSms;
+exports.sendInvitationLinkSms = sendInvitationLinkSms;
 const console_sms_provider_1 = require("./console-sms.provider");
 let smsProvider;
 function getSmsProvider() {
@@ -31,5 +32,11 @@ function sendOtpSms(phone, otp) {
     return __awaiter(this, void 0, void 0, function* () {
         const provider = getSmsProvider();
         yield provider.sendOtp(phone, otp);
+    });
+}
+function sendInvitationLinkSms(phone, invitationUrl) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        yield provider.sendInvitationLink(phone, invitationUrl);
     });
 }

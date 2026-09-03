@@ -21,6 +21,7 @@ const envSchema = zod_1.z.object({
     OTP_RATE_LIMIT_IP_WINDOW_MINUTES: zod_1.z.coerce.number().int().min(1).default(15),
     OTP_RATE_LIMIT_PHONE_MAX: zod_1.z.coerce.number().int().min(1).default(3),
     OTP_RATE_LIMIT_PHONE_WINDOW_MINUTES: zod_1.z.coerce.number().int().min(1).default(15),
+    FRONTEND_URL: zod_1.z.string().default('http://localhost:3000'),
     CORS_ORIGIN: zod_1.z.string().default('http://localhost:3000'),
     CORS_CREDENTIALS: zod_1.z.coerce.boolean().default(true),
     COOKIE_SECRET: zod_1.z.string().min(32),
@@ -75,6 +76,7 @@ exports.config = {
             },
         },
     },
+    frontendUrl: env.FRONTEND_URL,
     cors: {
         origin: env.CORS_ORIGIN,
         credentials: env.CORS_CREDENTIALS,

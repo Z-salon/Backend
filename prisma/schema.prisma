@@ -78,27 +78,54 @@ model User {
   memberships       BusinessMember[]
   sessions          Session[]
   otpChallenges     OtpChallenge[]
+  business          Business[]
   acceptedInvitations BusinessInvitation[] @relation("AcceptedInvitations")
+  auditLogs         AuditLog[]
 
   @@index([phone])
   @@index([status])
 }
 
 model Business {
-  id          String         @id @default(uuid())
-  name        String
-  currency    String         @default("ETB")
-  timezone    String         @default("Africa/Addis_Ababa")
-  status      BusinessStatus @default(ACTIVE)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id               String         @id @default(uuid())
+  name             String
+  slug             String         @unique
+  currency         String         @default("ETB")
+  timezone         String         @default("Africa/Addis_Ababa")
+  status           BusinessStatus @default(ACTIVE)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  owner_id         String         
+  user             User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
-  members     BusinessMember[]
-  roles       Role[]
-  invitations BusinessInvitation[]
-  branches    Branch[]
+  // Branding
+  logoUrl          String?
+  coverImageUrl    String?
+  primaryColor     String?
+  secondaryColor   String?
+
+  // Public Business Information
+  description      String?
+  aboutUs          String?
+  address          String?
+  phone            String?
+  email            String?
+  website          String?
+
+  // Social Media
+  facebookUrl      String?
+  instagramUrl     String?
+  telegramUrl      String?
+  tiktokUrl        String?
+
+  members          BusinessMember[]
+  roles            Role[]
+  invitations      BusinessInvitation[]
+  branches         Branch[]
+  auditLogs        AuditLog[]
 
   @@index([status])
+  @@index([slug])
 }
 
 model Branch {
@@ -201,6 +228,8 @@ model UserRole {
   @@index([businessMemberId])
   @@index([roleId])
   @@index([scopeType])
+  @@unique([businessMemberId, roleId, scopeType])
+
 }
 
 model UserRoleBranch {
@@ -211,6 +240,8 @@ model UserRoleBranch {
   branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@id([userRoleId, branchId])
+  @@unique([userRoleId, branchId])
+
 }
 
 model RegistrationRequest {
@@ -279,6 +310,7 @@ model BusinessInvitation {
   id                  String             @id @default(uuid())
   businessId          String
   phone               String
+  tokenHash           String             @unique
   status              InvitationStatus   @default(PENDING)
   expiresAt           DateTime
   invitedAt           DateTime           @default(now())
@@ -298,6 +330,7 @@ model BusinessInvitation {
   @@index([phone])
   @@index([status])
   @@index([expiresAt])
+  @@index([tokenHash])
   @@index([invitedByMemberId])
 }
 
@@ -325,4 +358,25 @@ model InvitationRoleBranch {
   branch           Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@id([invitationRoleId, branchId])
+  @@unique([invitationRoleId, branchId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  businessId String
+  actorId    String
+  action     String
+  entityType String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  createdAt  DateTime @default(now())
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
 }

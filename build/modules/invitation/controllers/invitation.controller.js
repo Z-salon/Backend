@@ -32,13 +32,26 @@ class InvitationController {
             }
         });
     }
+    getInvitationDetails(req, res, next) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const { invitationToken } = req.params;
+                const invitationDetails = yield invitation_service_1.invitationService.getInvitationDetails(invitationToken);
+                res.json((0, api_response_1.successResponse)('Invitation details retrieved', invitationDetails));
+            }
+            catch (error) {
+                next(error);
+            }
+        });
+    }
     acceptInvitation(req, res, next) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
             try {
-                const { phone, invitationId, verificationToken } = req.body;
+                const { verificationToken } = req.body;
                 const authUserId = (_a = req.auth) === null || _a === void 0 ? void 0 : _a.userId;
-                const result = yield invitation_service_1.invitationService.acceptInvitation(phone, invitationId, verificationToken, authUserId);
+                const invitationToken = req.params.invitationToken;
+                const result = yield invitation_service_1.invitationService.acceptInvitation(invitationToken, authUserId, verificationToken);
                 res.json((0, api_response_1.successResponse)('Invitation accepted successfully', result));
             }
             catch (error) {
