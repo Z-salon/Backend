@@ -166,3 +166,158 @@ export const businessBrandingSchema = z.object({
 }).strict().refine(data => Object.keys(data).length > 0, {
   message: 'At least one field must be provided for update',
 });
+
+const timeStringSchema = z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be in HH:mm format (24-hour)');
+
+const weeklyHourIntervalSchema = z.object({
+  start: timeStringSchema,
+  end: timeStringSchema,
+});
+
+const weeklyDaySchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  isClosed: z.boolean().default(false),
+  intervals: z.array(weeklyHourIntervalSchema).default([]),
+}).refine(data => {
+  if (data.isClosed) {
+    return data.intervals.length === 0;
+  }
+  return data.intervals.length > 0;
+}, {
+  message: 'Closed days must have empty intervals; open days must have at least one interval',
+  path: ['intervals'],
+}).refine(data => {
+  if (!data.isClosed) {
+    const intervals = data.intervals.map(i => ({ start: i.start, end: i.end }));
+    const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start));
+    for (let i = 0; i < sorted.length - 1; i++) {
+      if (sorted[i].end > sorted[i + 1].start) {
+        return false;
+      }
+    }
+  }
+  return true;
+}, {
+  message: 'Intervals cannot overlap',
+  path: ['intervals'],
+});
+
+const dateOverrideIntervalSchema = z.object({
+  start: timeStringSchema,
+  end: timeStringSchema,
+});
+
+const dateOverrideSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  isClosed: z.boolean().default(false),
+  intervals: z.array(dateOverrideIntervalSchema).default([]),
+}).refine(data => {
+  if (data.isClosed) {
+    return data.intervals.length === 0;
+  }
+  return data.intervals.length > 0;
+}, {
+  message: 'Closed dates must have empty intervals; open dates must have at least one interval',
+  path: ['intervals'],
+}).refine(data => {
+  if (!data.isClosed) {
+    const intervals = data.intervals.map(i => ({ start: i.start, end: i.end }));
+    const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start));
+    for (let i = 0; i < sorted.length - 1; i++) {
+      if (sorted[i].end > sorted[i + 1].start) {
+        return false;
+      }
+    }
+  }
+  return true;
+}, {
+  message: 'Intervals cannot overlap',
+  path: ['intervals'],
+});
+
+export const branchCreateSchema = z.object({
+  name: z.string().min(1).max(100),
+  address: z.string().min(1).max(500),
+  timezone: z.string().optional(),
+}).strict();
+
+export const branchUpdateSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  address: z.string().max(500).nullable().optional(),
+  timezone: z.string().optional(),
+  isActive: z.boolean().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+export const branchWeeklyHoursSchema = z.object({
+  days: z.array(weeklyDaySchema).length(7),
+}).strict().refine(data => {
+  const days = data.days.map(d => d.dayOfWeek);
+  const uniqueDays = new Set(days);
+  return uniqueDays.size === 7 && days.every(d => d >= 0 && d <= 6);
+}, {
+  message: 'Must provide exactly 7 unique days (0-6)',
+  path: ['days'],
+});
+
+export const branchDateOverrideCreateSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  isClosed: z.boolean().default(false),
+  intervals: z.array(dateOverrideIntervalSchema).default([]),
+}).strict().refine(data => {
+  if (data.isClosed) {
+    return data.intervals.length === 0;
+  }
+  return data.intervals.length > 0;
+}, {
+  message: 'Closed dates must have empty intervals; open dates must have at least one interval',
+  path: ['intervals'],
+}).refine(data => {
+  if (!data.isClosed) {
+    const intervals = data.intervals.map(i => ({ start: i.start, end: i.end }));
+    const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start));
+    for (let i = 0; i < sorted.length - 1; i++) {
+      if (sorted[i].end > sorted[i + 1].start) {
+        return false;
+      }
+    }
+  }
+  return true;
+}, {
+  message: 'Intervals cannot overlap',
+  path: ['intervals'],
+});
+
+export const branchDateOverrideUpdateSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format').optional(),
+  isClosed: z.boolean().optional(),
+  intervals: z.array(dateOverrideIntervalSchema).optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+}).refine(data => {
+  if (data.isClosed === true && data.intervals && data.intervals.length > 0) {
+    return false;
+  }
+  if (data.isClosed === false && data.intervals && data.intervals.length === 0) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Closed dates must have empty intervals; open dates must have at least one interval',
+  path: ['intervals'],
+});
+
+export const branchBookingConfigUpdateSchema = z.object({
+  onlineBookingEnabled: z.boolean().optional(),
+  walkInEnabled: z.boolean().optional(),
+  bookingApprovalRequired: z.boolean().optional(),
+  minimumAdvanceBookingMinutes: z.number().int().min(0).optional(),
+  maximumAdvanceBookingDays: z.number().int().min(1).optional(),
+  cancellationWindowMinutes: z.number().int().min(0).optional(),
+  reschedulingEnabled: z.boolean().optional(),
+  bookingBufferMinutes: z.number().int().min(0).optional(),
+  waitlistEnabled: z.boolean().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});

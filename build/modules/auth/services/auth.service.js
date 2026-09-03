@@ -235,11 +235,17 @@ class AuthService {
                     owner_id: user.id,
                 },
             });
-            yield prisma_1.prisma.branch.create({
+            const mainBranch = yield prisma_1.prisma.branch.create({
                 data: {
                     businessId: business.id,
                     name: 'Main Branch',
+                    timezone: registrationRequest.timezone,
                     isActive: true,
+                },
+            });
+            yield prisma_1.prisma.branchBookingConfig.create({
+                data: {
+                    branchId: mainBranch.id,
                 },
             });
             const member = yield prisma_1.prisma.businessMember.create({

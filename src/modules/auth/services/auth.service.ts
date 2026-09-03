@@ -410,11 +410,18 @@ async registerInvitation(
       },
     });
 
-    await prisma.branch.create({
+    const mainBranch = await prisma.branch.create({
       data: {
         businessId: business.id,
         name: 'Main Branch',
+        timezone: registrationRequest.timezone,
         isActive: true,
+      },
+    });
+
+    await prisma.branchBookingConfig.create({
+      data: {
+        branchId: mainBranch.id,
       },
     });
 

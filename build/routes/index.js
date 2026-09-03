@@ -9,6 +9,7 @@ const invitation_routes_1 = __importDefault(require("../modules/invitation/route
 const member_routes_1 = __importDefault(require("../modules/business/routes/member.routes"));
 const role_routes_1 = __importDefault(require("../modules/role/routes/role.routes"));
 const business_configuration_routes_1 = __importDefault(require("../modules/business/routes/business-configuration.routes"));
+const branch_routes_1 = __importDefault(require("../modules/business/routes/branch.routes"));
 const env_1 = require("../config/env");
 const router = (0, express_1.Router)();
 router.use(`${env_1.config.apiPrefix}/auth`, auth_routes_1.default);
@@ -16,6 +17,7 @@ router.use(`${env_1.config.apiPrefix}`, invitation_routes_1.default);
 router.use(`${env_1.config.apiPrefix}`, member_routes_1.default);
 router.use(`${env_1.config.apiPrefix}`, role_routes_1.default);
 router.use(`${env_1.config.apiPrefix}`, business_configuration_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, branch_routes_1.default);
 router.get('/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.businessBrandingSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
+exports.branchBookingConfigUpdateSchema = exports.branchDateOverrideUpdateSchema = exports.branchDateOverrideCreateSchema = exports.branchWeeklyHoursSchema = exports.branchUpdateSchema = exports.branchCreateSchema = exports.businessBrandingSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
 const zod_1 = require("zod");
 exports.phoneSchema = zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)');
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
@@ -139,6 +139,150 @@ exports.businessBrandingSchema = zod_1.z.object({
     instagramUrl: zod_1.z.string().url().nullable().optional(),
     telegramUrl: zod_1.z.string().url().nullable().optional(),
     tiktokUrl: zod_1.z.string().url().nullable().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided for update',
+});
+const timeStringSchema = zod_1.z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be in HH:mm format (24-hour)');
+const weeklyHourIntervalSchema = zod_1.z.object({
+    start: timeStringSchema,
+    end: timeStringSchema,
+});
+const weeklyDaySchema = zod_1.z.object({
+    dayOfWeek: zod_1.z.number().int().min(0).max(6),
+    isClosed: zod_1.z.boolean().default(false),
+    intervals: zod_1.z.array(weeklyHourIntervalSchema).default([]),
+}).refine(data => {
+    if (data.isClosed) {
+        return data.intervals.length === 0;
+    }
+    return data.intervals.length > 0;
+}, {
+    message: 'Closed days must have empty intervals; open days must have at least one interval',
+    path: ['intervals'],
+}).refine(data => {
+    if (!data.isClosed) {
+        const intervals = data.intervals.map(i => ({ start: i.start, end: i.end }));
+        const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start));
+        for (let i = 0; i < sorted.length - 1; i++) {
+            if (sorted[i].end > sorted[i + 1].start) {
+                return false;
+            }
+        }
+    }
+    return true;
+}, {
+    message: 'Intervals cannot overlap',
+    path: ['intervals'],
+});
+const dateOverrideIntervalSchema = zod_1.z.object({
+    start: timeStringSchema,
+    end: timeStringSchema,
+});
+const dateOverrideSchema = zod_1.z.object({
+    date: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+    isClosed: zod_1.z.boolean().default(false),
+    intervals: zod_1.z.array(dateOverrideIntervalSchema).default([]),
+}).refine(data => {
+    if (data.isClosed) {
+        return data.intervals.length === 0;
+    }
+    return data.intervals.length > 0;
+}, {
+    message: 'Closed dates must have empty intervals; open dates must have at least one interval',
+    path: ['intervals'],
+}).refine(data => {
+    if (!data.isClosed) {
+        const intervals = data.intervals.map(i => ({ start: i.start, end: i.end }));
+        const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start));
+        for (let i = 0; i < sorted.length - 1; i++) {
+            if (sorted[i].end > sorted[i + 1].start) {
+                return false;
+            }
+        }
+    }
+    return true;
+}, {
+    message: 'Intervals cannot overlap',
+    path: ['intervals'],
+});
+exports.branchCreateSchema = zod_1.z.object({
+    name: zod_1.z.string().min(1).max(100),
+    address: zod_1.z.string().min(1).max(500),
+    timezone: zod_1.z.string().optional(),
+}).strict();
+exports.branchUpdateSchema = zod_1.z.object({
+    name: zod_1.z.string().min(1).max(100).optional(),
+    address: zod_1.z.string().max(500).nullable().optional(),
+    timezone: zod_1.z.string().optional(),
+    isActive: zod_1.z.boolean().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided for update',
+});
+exports.branchWeeklyHoursSchema = zod_1.z.object({
+    days: zod_1.z.array(weeklyDaySchema).length(7),
+}).strict().refine(data => {
+    const days = data.days.map(d => d.dayOfWeek);
+    const uniqueDays = new Set(days);
+    return uniqueDays.size === 7 && days.every(d => d >= 0 && d <= 6);
+}, {
+    message: 'Must provide exactly 7 unique days (0-6)',
+    path: ['days'],
+});
+exports.branchDateOverrideCreateSchema = zod_1.z.object({
+    date: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+    isClosed: zod_1.z.boolean().default(false),
+    intervals: zod_1.z.array(dateOverrideIntervalSchema).default([]),
+}).strict().refine(data => {
+    if (data.isClosed) {
+        return data.intervals.length === 0;
+    }
+    return data.intervals.length > 0;
+}, {
+    message: 'Closed dates must have empty intervals; open dates must have at least one interval',
+    path: ['intervals'],
+}).refine(data => {
+    if (!data.isClosed) {
+        const intervals = data.intervals.map(i => ({ start: i.start, end: i.end }));
+        const sorted = [...intervals].sort((a, b) => a.start.localeCompare(b.start));
+        for (let i = 0; i < sorted.length - 1; i++) {
+            if (sorted[i].end > sorted[i + 1].start) {
+                return false;
+            }
+        }
+    }
+    return true;
+}, {
+    message: 'Intervals cannot overlap',
+    path: ['intervals'],
+});
+exports.branchDateOverrideUpdateSchema = zod_1.z.object({
+    date: zod_1.z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format').optional(),
+    isClosed: zod_1.z.boolean().optional(),
+    intervals: zod_1.z.array(dateOverrideIntervalSchema).optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided for update',
+}).refine(data => {
+    if (data.isClosed === true && data.intervals && data.intervals.length > 0) {
+        return false;
+    }
+    if (data.isClosed === false && data.intervals && data.intervals.length === 0) {
+        return false;
+    }
+    return true;
+}, {
+    message: 'Closed dates must have empty intervals; open dates must have at least one interval',
+    path: ['intervals'],
+});
+exports.branchBookingConfigUpdateSchema = zod_1.z.object({
+    onlineBookingEnabled: zod_1.z.boolean().optional(),
+    walkInEnabled: zod_1.z.boolean().optional(),
+    bookingApprovalRequired: zod_1.z.boolean().optional(),
+    minimumAdvanceBookingMinutes: zod_1.z.number().int().min(0).optional(),
+    maximumAdvanceBookingDays: zod_1.z.number().int().min(1).optional(),
+    cancellationWindowMinutes: zod_1.z.number().int().min(0).optional(),
+    reschedulingEnabled: zod_1.z.boolean().optional(),
+    bookingBufferMinutes: zod_1.z.number().int().min(0).optional(),
+    waitlistEnabled: zod_1.z.boolean().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
     message: 'At least one field must be provided for update',
 });

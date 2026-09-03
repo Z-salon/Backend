@@ -132,13 +132,18 @@ model Branch {
   id          String   @id @default(uuid())
   businessId  String
   name        String
+  address     String?
+  timezone    String
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  userRoleBranches     UserRoleBranch[]
+  userRoleBranches       UserRoleBranch[]
   invitationRoleBranches InvitationRoleBranch[]
+  weeklySchedules        BranchWeeklySchedule[]
+  dateOverrides          BranchDateOverride[]
+  bookingConfig          BranchBookingConfig?
 
   @@unique([businessId, name])
   @@index([businessId])
@@ -379,4 +384,74 @@ model AuditLog {
   @@index([actorId])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model BranchWeeklySchedule {
+  id            String   @id @default(uuid())
+  branchId      String
+  dayOfWeek     Int
+  isClosed      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  intervals     BranchWeeklyHourInterval[]
+
+  @@unique([branchId, dayOfWeek])
+  @@index([branchId])
+}
+
+model BranchWeeklyHourInterval {
+  id                String   @id @default(uuid())
+  weeklyScheduleId  String
+  startTime         DateTime @db.Time(0)
+  endTime           DateTime @db.Time(0)
+
+  weeklySchedule    BranchWeeklySchedule @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+
+  @@index([weeklyScheduleId])
+}
+
+model BranchDateOverride {
+  id          String   @id @default(uuid())
+  branchId    String
+  date        DateTime @db.Date
+  isClosed    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  intervals   BranchDateOverrideInterval[]
+
+  @@unique([branchId, date])
+  @@index([branchId, date])
+}
+
+model BranchDateOverrideInterval {
+  id          String   @id @default(uuid())
+  overrideId  String
+  startTime   DateTime @db.Time(0)
+  endTime     DateTime @db.Time(0)
+
+  override    BranchDateOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+
+  @@index([overrideId])
+}
+
+model BranchBookingConfig {
+  id                       String   @id @default(uuid())
+  branchId                 String   @unique
+  onlineBookingEnabled     Boolean  @default(true)
+  walkInEnabled            Boolean  @default(true)
+  bookingApprovalRequired  Boolean  @default(false)
+  minimumAdvanceBookingMinutes Int  @default(120)
+  maximumAdvanceBookingDays    Int  @default(30)
+  cancellationWindowMinutes    Int  @default(60)
+  reschedulingEnabled          Boolean @default(true)
+  bookingBufferMinutes         Int  @default(0)
+  waitlistEnabled              Boolean @default(false)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  branch                   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
 }
