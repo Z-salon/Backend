@@ -66,6 +66,29 @@ enum SessionStatus {
   EXPIRED
 }
 
+enum ServiceCategoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ServiceStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployeeAssignmentMode {
+  CUSTOMER_CHOOSES
+  SALON_ASSIGNS
+  ANY_AVAILABLE
+}
+
+enum DepositPolicyType {
+  NONE
+  FIXED
+  PERCENTAGE
+  FULL
+}
+
 model User {
   id                String    @id @default(uuid())
   phone             String    @unique
@@ -123,6 +146,8 @@ model Business {
   invitations      BusinessInvitation[]
   branches         Branch[]
   auditLogs        AuditLog[]
+  serviceCategories ServiceCategory[]
+  services         Service[]
 
   @@index([status])
   @@index([slug])
@@ -144,6 +169,8 @@ model Branch {
   weeklySchedules        BranchWeeklySchedule[]
   dateOverrides          BranchDateOverride[]
   bookingConfig          BranchBookingConfig?
+  categoryAssignments    ServiceCategoryBranchAssignment[]
+  serviceAssignments     ServiceBranchAssignment[]
 
   @@unique([businessId, name])
   @@index([businessId])
@@ -454,4 +481,87 @@ model BranchBookingConfig {
   updatedAt                DateTime @updatedAt
 
   branch                   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+}
+
+model ServiceCategory {
+  id          String                @id @default(uuid())
+  businessId  String
+  name        String
+  description String?
+  status      ServiceCategoryStatus @default(ACTIVE)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  services          Service[]
+  branchAssignments ServiceCategoryBranchAssignment[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@index([status])
+}
+
+model ServiceCategoryBranchAssignment {
+  id         String  @id @default(uuid())
+  categoryId String
+  branchId   String
+  isActive   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  category ServiceCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  branch   Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, branchId])
+  @@index([categoryId])
+  @@index([branchId])
+  @@index([isActive])
+}
+
+model Service {
+  id                     String                 @id @default(uuid())
+  businessId             String
+  categoryId             String
+  name                   String
+  description            String?
+  durationMinutes        Int
+  price                  Decimal                @db.Decimal(12, 2)
+  employeeAssignmentMode EmployeeAssignmentMode
+  showPriceToCustomer    Boolean                @default(true)
+  depositPolicyType      DepositPolicyType      @default(NONE)
+  depositAmount          Decimal?               @db.Decimal(12, 2)
+  status                 ServiceStatus          @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category ServiceCategory @relation(fields: [categoryId], references: [id])
+
+  branchAssignments ServiceBranchAssignment[]
+
+  @@index([businessId])
+  @@index([categoryId])
+  @@index([status])
+}
+
+model ServiceBranchAssignment {
+  id        String  @id @default(uuid())
+  serviceId String
+  branchId  String
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, branchId])
+  @@index([serviceId])
+  @@index([branchId])
+  @@index([isActive])
 }
