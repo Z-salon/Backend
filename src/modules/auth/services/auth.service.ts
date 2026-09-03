@@ -65,29 +65,288 @@ export class AuthService {
     await otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
   }
 
-  async registerInvitation(data: { phone: string; password: string }): Promise<void> {
-    const normalizedPhone = normalizePhone(data.phone);
+async registerInvitation(
+  invitationToken: string,
+  data: {
+    password: string;
+  }
+): Promise<{
+  message: string;
+  phone: string;
+}> {
 
-    const existingUser = await prisma.user.findUnique({
-      where: { phone: normalizedPhone },
+  // ============================================================
+  // 1. Validate password
+  // ============================================================
+
+  if (
+    !data.password ||
+    data.password.length < 8
+  ) {
+
+    throw new ApiError(
+      400,
+      'Password must be at least 8 characters long',
+      ErrorCodes.BAD_REQUEST
+    );
+
+  }
+
+
+  // ============================================================
+  // 2. Hash invitation token
+  // ============================================================
+
+  const tokenHash =
+    hashVerificationToken(
+      invitationToken
+    );
+
+
+  // ============================================================
+  // 3. Find invitation
+  // ============================================================
+
+  const invitation =
+    await prisma.businessInvitation.findUnique({
+
+      where: {
+        tokenHash,
+      },
+
+      select: {
+
+        id: true,
+
+        phone: true,
+
+        status: true,
+
+        expiresAt: true,
+
+        business: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+
+      },
+
     });
 
-    if (existingUser) {
-      throw new ApiError(409, 'User already exists. Please log in to accept the invitation.', ErrorCodes.USER_ALREADY_EXISTS);
+
+  // ============================================================
+  // 4. Invitation not found
+  // ============================================================
+
+  if (!invitation) {
+
+    throw new ApiError(
+      404,
+      'Invitation not found',
+      ErrorCodes.INVITATION_NOT_FOUND
+    );
+
+  }
+
+
+  // ============================================================
+  // 5. Invitation status
+  // ============================================================
+
+  if (
+    invitation.status ===
+    'ACCEPTED'
+  ) {
+
+    throw new ApiError(
+      409,
+      'This invitation has already been accepted',
+      ErrorCodes.CONFLICT
+    );
+
+  }
+
+
+  if (
+    invitation.status ===
+    'REVOKED'
+  ) {
+
+    throw new ApiError(
+      410,
+      'This invitation has been revoked',
+      ErrorCodes.INVITATION_REVOKED
+    );
+
+  }
+
+
+
+
+
+  // ============================================================
+  // 6. Expiration
+  // ============================================================
+
+  if (
+    invitation.expiresAt <=
+    new Date()
+  ) {
+
+    if (
+      invitation.status ===
+      'PENDING'
+    ) {
+
+      await prisma.businessInvitation.update({
+
+        where: {
+          id:
+            invitation.id,
+        },
+
+        data: {
+          status:
+            'EXPIRED',
+        },
+
+      });
+
     }
 
-    const passwordHash = await argon2.hash(data.password);
 
-    await prisma.user.create({
-      data: {
-        phone: normalizedPhone,
-        passwordHash,
-        status: 'PENDING_VERIFICATION',
+    throw new ApiError(
+      410,
+      'Invitation has expired',
+      ErrorCodes.INVITATION_EXPIRED
+    );
+
+  }
+
+
+  // ============================================================
+  // 7. Business must still be active
+  // ============================================================
+
+  if (
+    invitation.business.status !==
+    'ACTIVE'
+  ) {
+
+    throw new ApiError(
+      403,
+      'Business is no longer active',
+      ErrorCodes.BUSINESS_SUSPENDED
+    );
+
+  }
+
+
+  // ============================================================
+  // 8. Phone comes ONLY from invitation
+  // ============================================================
+
+  const normalizedPhone =
+    normalizePhone(
+      invitation.phone
+    );
+
+
+  // ============================================================
+  // 9. Check whether user already exists
+  // ============================================================
+
+  const existingUser =
+    await prisma.user.findUnique({
+
+      where: {
+        phone:
+          normalizedPhone,
       },
+
+      select: {
+        id: true,
+        status: true,
+      },
+
     });
 
-    await otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+
+  if (existingUser) {
+
+    throw new ApiError(
+      409,
+      'An account already exists for this invitation. Please log in to accept the invitation.',
+      ErrorCodes.USER_ALREADY_EXISTS
+    );
+
   }
+
+
+  // ============================================================
+  // 10. Hash password
+  // ============================================================
+
+  const passwordHash =
+    await argon2.hash(
+      data.password
+    );
+
+
+  // ============================================================
+  // 11. Create user + request OTP
+  // ============================================================
+
+  //
+  // IMPORTANT:
+  // Do not put otpService.requestOtp()
+  // inside a Prisma transaction if it sends SMS.
+  //
+
+  await prisma.user.create({
+
+    data: {
+
+      phone:
+        normalizedPhone,
+
+      passwordHash,
+
+      status:
+        'PENDING_VERIFICATION',
+
+    },
+
+  });
+
+
+  // ============================================================
+  // 12. Request OTP
+  // ============================================================
+
+  await otpService.requestOtp(
+    normalizedPhone,
+    'PHONE_VERIFICATION'
+  );
+
+
+  // ============================================================
+  // 13. Return
+  // ============================================================
+
+  return {
+
+    message:
+      'Registration started. Please verify your phone number using the OTP.',
+
+    phone:
+      normalizedPhone,
+
+  };
+
+}
 
   async registerVerify(phone: string, otp: string, deviceInfo?: { deviceName?: string; userAgent?: string; ipAddress?: string }): Promise<AuthResult> {
     const normalizedPhone = normalizePhone(phone);
@@ -106,75 +365,83 @@ export class AuthService {
     }
 
     // const result = await prisma.$transaction(async (tx) => {
-      let user = await prisma.user.findUnique({
-        where: { phone: normalizedPhone },
-      });
+    let user = await prisma.user.findUnique({
+      where: { phone: normalizedPhone },
+    });
 
-      if (!user) {
-        user = await prisma.user.create({
-          data: {
-            phone: normalizedPhone,
-            passwordHash: registrationRequest.passwordHash,
-            phoneVerifiedAt: new Date(),
-            status: 'ACTIVE',
-          },
-        });
-      } else if (user.status === 'PENDING_VERIFICATION') {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            passwordHash: registrationRequest.passwordHash,
-            phoneVerifiedAt: new Date(),
-            status: 'ACTIVE',
-          },
-        });
-      }
-
-      if (user.status !== 'ACTIVE') {
-        throw new ApiError(403, 'User account is suspended', ErrorCodes.USER_SUSPENDED);
-      }
-
-      const business = await prisma.business.create({
+    if (!user) {
+      user = await prisma.user.create({
         data: {
-          name: registrationRequest.businessName,
-          currency: registrationRequest.currency,
-          timezone: registrationRequest.timezone,
+          phone: normalizedPhone,
+          passwordHash: registrationRequest.passwordHash,
+          phoneVerifiedAt: new Date(),
           status: 'ACTIVE',
         },
       });
-
-      await prisma.branch.create({
+    } else if (user.status === 'PENDING_VERIFICATION') {
+      user = await prisma.user.update({
+        where: { id: user.id },
         data: {
-          businessId: business.id,
-          name: 'Main Branch',
-          isActive: true,
-        },
-      });
-
-      const member = await prisma.businessMember.create({
-        data: {
-          businessId: business.id,
-          userId: user.id,
+          passwordHash: registrationRequest.passwordHash,
+          phoneVerifiedAt: new Date(),
           status: 'ACTIVE',
-          joinedAt: new Date(),
         },
       });
+    }
 
-      
-      
+    if (user.status !== 'ACTIVE') {
+      throw new ApiError(403, 'User account is suspended', ErrorCodes.USER_SUSPENDED);
+    }
 
-      // return {
-      //   user: {
-      //     id: user.id,
-      //     phone: user.phone,
-      //     phoneVerifiedAt: user.phoneVerifiedAt,
-      //   },
-      //   memberId: member.id,
-      //   businessId: business.id,
-      // };
+    const slug = registrationRequest.businessName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '')
+      + '-' + Date.now().toString(36);
+
+    const business = await prisma.business.create({
+      data: {
+        name: registrationRequest.businessName,
+        slug,
+        currency: registrationRequest.currency,
+        timezone: registrationRequest.timezone,
+        status: 'ACTIVE',
+        owner_id: user.id,
+      },
+    });
+
+    await prisma.branch.create({
+      data: {
+        businessId: business.id,
+        name: 'Main Branch',
+        isActive: true,
+      },
+    });
+
+    const member = await prisma.businessMember.create({
+      data: {
+        businessId: business.id,
+        userId: user.id,
+        status: 'ACTIVE',
+        joinedAt: new Date(),
+      },
+    });
+
+
+
+
+    // return {
+    //   user: {
+    //     id: user.id,
+    //     phone: user.phone,
+    //     phoneVerifiedAt: user.phoneVerifiedAt,
+    //   },
+    //   memberId: member.id,
+    //   businessId: business.id,
+    // };
     // );
 
-    await this.createDefaultRolesAndPermissions(prisma,business.id, member.id);
+    await this.createDefaultRolesAndPermissions(prisma, business.id, member.id);
 
     await prisma.registrationRequest.delete({ where: { id: registrationRequest.id } });
 
@@ -201,6 +468,16 @@ export class AuthService {
 
     if (!user || !user.passwordHash) {
       throw new ApiError(401, 'Invalid phone number or password.', ErrorCodes.INVALID_CREDENTIALS);
+    }
+
+    if (
+      user.status === 'PENDING_VERIFICATION'
+    ) {
+      throw new ApiError(
+        403,
+        'Please verify your phone number before logging in',
+        ErrorCodes.PHONE_NOT_VERIFIED
+      );
     }
 
     if (user.status !== 'ACTIVE') {
@@ -460,206 +737,206 @@ export class AuthService {
   }
 
   private async createDefaultRolesAndPermissions(
-  tx: any,
-  businessId: string,
-  ownerMemberId: string
-): Promise<void> {
+    tx: any,
+    businessId: string,
+    ownerMemberId: string
+  ): Promise<void> {
 
-  // Get seeded permissions
-  const permissions = await tx.permission.findMany({
-    select: {
-      id: true,
-      code: true,
-    },
-  });
-
-  const permissionMap = new Map<string, string>(
-    permissions.map((p: { code: string; id: string }) => [
-      p.code,
-      p.id,
-    ])
-  );
-
-  const allPermissionCodes = Array.from(permissionMap.keys());
-
-
-  // ==========================================
-  // DEFAULT BUSINESS ROLES
-  // ==========================================
-
-  const defaultRoles = [
-    {
-      name: 'Owner',
-      systemKey: 'OWNER',
-      description: 'Business owner with full access',
-      permissionCodes: allPermissionCodes,
-    },
-
-    {
-      name: 'Admin',
-      systemKey: 'ADMIN',
-      description: 'Business administrator',
-      permissionCodes: allPermissionCodes.filter(
-        (code: string) =>
-          ![
-            'FINANCE_REFUND',
-            'FINANCE_ADJUSTMENT',
-          ].includes(code)
-      ),
-    },
-
-    {
-      name: 'Branch Manager',
-      systemKey: 'BRANCH_MANAGER',
-      description: 'Manages a specific branch',
-      permissionCodes: [
-        'BOOKING_VIEW',
-        'BOOKING_CREATE',
-        'BOOKING_UPDATE',
-        'BOOKING_CANCEL',
-        'BOOKING_CHECK_IN',
-        'BOOKING_START',
-        'BOOKING_COMPLETE',
-        'BOOKING_MARK_NO_SHOW',
-        'BOOKING_MANAGE_WAITLIST',
-
-        'CUSTOMER_VIEW',
-        'CUSTOMER_CREATE',
-        'CUSTOMER_UPDATE',
-
-        'STAFF_VIEW',
-        'STAFF_MANAGE_SCHEDULE',
-
-        'SERVICE_VIEW',
-
-        'BRANCH_VIEW',
-
-        'FINANCE_VIEW',
-      ],
-    },
-
-    {
-      name: 'Receptionist',
-      systemKey: 'RECEPTIONIST',
-      description: 'Front desk receptionist',
-      permissionCodes: [
-        'BOOKING_VIEW',
-        'BOOKING_CREATE',
-        'BOOKING_UPDATE',
-        'BOOKING_CANCEL',
-        'BOOKING_CHECK_IN',
-
-        'CUSTOMER_VIEW',
-        'CUSTOMER_CREATE',
-        'CUSTOMER_UPDATE',
-
-        'SERVICE_VIEW',
-
-        'STAFF_VIEW',
-      ],
-    },
-  ];
-
-
-  // ==========================================
-  // CREATE ROLES + PERMISSIONS
-  // ==========================================
-
-  const createdRoles: {
-    role: { id: string };
-    systemKey: string;
-  }[] = [];
-
-
-  for (const roleData of defaultRoles) {
-
-    // 1. Create role
-    const role = await tx.role.upsert({
-      where: {
-        businessId_systemKey: {
-          businessId,
-          systemKey: roleData.systemKey,
-        },
-      },
-
-      update: {
-        name: roleData.name,
-        description: roleData.description,
-        type: 'SYSTEM',
-        isActive: true,
-      },
-
-      create: {
-        businessId,
-        name: roleData.name,
-        description: roleData.description,
-        type: 'SYSTEM',
-        systemKey: roleData.systemKey,
-        isActive: true,
+    // Get seeded permissions
+    const permissions = await tx.permission.findMany({
+      select: {
+        id: true,
+        code: true,
       },
     });
 
-
-    // 2. Validate permissions
-    const missingPermissions = roleData.permissionCodes.filter(
-      (code) => !permissionMap.has(code)
+    const permissionMap = new Map<string, string>(
+      permissions.map((p: { code: string; id: string }) => [
+        p.code,
+        p.id,
+      ])
     );
 
-    if (missingPermissions.length > 0) {
-      throw new Error(
-        `Missing permissions for role ${roleData.systemKey}: ` +
-        missingPermissions.join(', ')
+    const allPermissionCodes = Array.from(permissionMap.keys());
+
+
+    // ==========================================
+    // DEFAULT BUSINESS ROLES
+    // ==========================================
+
+    const defaultRoles = [
+      {
+        name: 'Owner',
+        systemKey: 'OWNER',
+        description: 'Business owner with full access',
+        permissionCodes: allPermissionCodes,
+      },
+
+      {
+        name: 'Admin',
+        systemKey: 'ADMIN',
+        description: 'Business administrator',
+        permissionCodes: allPermissionCodes.filter(
+          (code: string) =>
+            ![
+              'FINANCE_REFUND',
+              'FINANCE_ADJUSTMENT',
+            ].includes(code)
+        ),
+      },
+
+      {
+        name: 'Branch Manager',
+        systemKey: 'BRANCH_MANAGER',
+        description: 'Manages a specific branch',
+        permissionCodes: [
+          'BOOKING_VIEW',
+          'BOOKING_CREATE',
+          'BOOKING_UPDATE',
+          'BOOKING_CANCEL',
+          'BOOKING_CHECK_IN',
+          'BOOKING_START',
+          'BOOKING_COMPLETE',
+          'BOOKING_MARK_NO_SHOW',
+          'BOOKING_MANAGE_WAITLIST',
+
+          'CUSTOMER_VIEW',
+          'CUSTOMER_CREATE',
+          'CUSTOMER_UPDATE',
+
+          'STAFF_VIEW',
+          'STAFF_MANAGE_SCHEDULE',
+
+          'SERVICE_VIEW',
+
+          'BRANCH_VIEW',
+
+          'FINANCE_VIEW',
+        ],
+      },
+
+      {
+        name: 'Receptionist',
+        systemKey: 'RECEPTIONIST',
+        description: 'Front desk receptionist',
+        permissionCodes: [
+          'BOOKING_VIEW',
+          'BOOKING_CREATE',
+          'BOOKING_UPDATE',
+          'BOOKING_CANCEL',
+          'BOOKING_CHECK_IN',
+
+          'CUSTOMER_VIEW',
+          'CUSTOMER_CREATE',
+          'CUSTOMER_UPDATE',
+
+          'SERVICE_VIEW',
+
+          'STAFF_VIEW',
+        ],
+      },
+    ];
+
+
+    // ==========================================
+    // CREATE ROLES + PERMISSIONS
+    // ==========================================
+
+    const createdRoles: {
+      role: { id: string };
+      systemKey: string;
+    }[] = [];
+
+
+    for (const roleData of defaultRoles) {
+
+      // 1. Create role
+      const role = await tx.role.upsert({
+        where: {
+          businessId_systemKey: {
+            businessId,
+            systemKey: roleData.systemKey,
+          },
+        },
+
+        update: {
+          name: roleData.name,
+          description: roleData.description,
+          type: 'SYSTEM',
+          isActive: true,
+        },
+
+        create: {
+          businessId,
+          name: roleData.name,
+          description: roleData.description,
+          type: 'SYSTEM',
+          systemKey: roleData.systemKey,
+          isActive: true,
+        },
+      });
+
+
+      // 2. Validate permissions
+      const missingPermissions = roleData.permissionCodes.filter(
+        (code) => !permissionMap.has(code)
       );
-    }
+
+      if (missingPermissions.length > 0) {
+        throw new Error(
+          `Missing permissions for role ${roleData.systemKey}: ` +
+          missingPermissions.join(', ')
+        );
+      }
 
 
-    // 3. Convert codes to IDs
-    const permissionIds = roleData.permissionCodes.map(
-      (code) => permissionMap.get(code)!
-    );
+      // 3. Convert codes to IDs
+      const permissionIds = roleData.permissionCodes.map(
+        (code) => permissionMap.get(code)!
+      );
 
 
-    // 4. Insert relationships in ONE query
-    if (permissionIds.length > 0) {
+      // 4. Insert relationships in ONE query
+      if (permissionIds.length > 0) {
 
-      await tx.rolePermission.createMany({
-        data: permissionIds.map((permissionId) => ({
-          roleId: role.id,
-          permissionId,
-        })),
+        await tx.rolePermission.createMany({
+          data: permissionIds.map((permissionId) => ({
+            roleId: role.id,
+            permissionId,
+          })),
 
-        skipDuplicates: true,
+          skipDuplicates: true,
+        });
+      }
+
+
+      createdRoles.push({
+        role,
+        systemKey: roleData.systemKey,
       });
     }
 
 
-    createdRoles.push({
-      role,
-      systemKey: roleData.systemKey,
+    // ==========================================
+    // ASSIGN OWNER ROLE
+    // ==========================================
+
+    const ownerRole = createdRoles.find(
+      (r) => r.systemKey === 'OWNER'
+    )?.role;
+
+    if (!ownerRole) {
+      throw new Error('Owner role was not created');
+    }
+
+
+    await tx.userRole.create({
+      data: {
+        businessMemberId: ownerMemberId,
+        roleId: ownerRole.id,
+        scopeType: 'BUSINESS',
+      },
     });
   }
-
-
-  // ==========================================
-  // ASSIGN OWNER ROLE
-  // ==========================================
-
-  const ownerRole = createdRoles.find(
-    (r) => r.systemKey === 'OWNER'
-  )?.role;
-
-  if (!ownerRole) {
-    throw new Error('Owner role was not created');
-  }
-
-
-  await tx.userRole.create({
-    data: {
-      businessMemberId: ownerMemberId,
-      roleId: ownerRole.id,
-      scopeType: 'BUSINESS',
-    },
-  });
-}
 }
 export const authService = new AuthService();

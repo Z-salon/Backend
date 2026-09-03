@@ -24,6 +24,7 @@ const envSchema = z.object({
   OTP_RATE_LIMIT_PHONE_MAX: z.coerce.number().int().min(1).default(3),
   OTP_RATE_LIMIT_PHONE_WINDOW_MINUTES: z.coerce.number().int().min(1).default(15),
 
+  FRONTEND_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   CORS_CREDENTIALS: z.coerce.boolean().default(true),
 
@@ -90,6 +91,7 @@ export const config = {
     },
   },
 
+  frontendUrl: env.FRONTEND_URL,
   cors: {
     origin: env.CORS_ORIGIN,
     credentials: env.CORS_CREDENTIALS,

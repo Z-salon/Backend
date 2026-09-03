@@ -95,14 +95,10 @@ export const invitationCreateSchema = z.object({
 });
 
 export const invitationRegisterSchema = z.object({
-  phone: phoneSchema,
   password: passwordSchema,
-  invitationId: z.string().uuid('Invalid invitation ID').optional(),
 }).strict();
 
 export const invitationAcceptSchema = z.object({
-  invitationId: z.string().uuid('Invalid invitation ID').optional(),
-  phone: phoneSchema,
   verificationToken: z.string().min(1, 'Verification token is required').optional(),
 }).strict();
 
@@ -142,4 +138,31 @@ export const roleAssignmentSchema = z.object({
 }, {
   message: 'BUSINESS scope requires no branchIds; BRANCH scope requires at least one branchId',
   path: ['branchIds'],
+});
+
+export const businessUpdateSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  currency: z.string().length(3).optional(),
+  timezone: z.string().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
+
+export const businessBrandingSchema = z.object({
+  logoUrl: z.string().url().nullable().optional(),
+  coverImageUrl: z.string().url().nullable().optional(),
+  primaryColor: z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #FF0000)').nullable().optional(),
+  secondaryColor: z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #00FF00)').nullable().optional(),
+  description: z.string().max(1000).nullable().optional(),
+  aboutUs: z.string().max(5000).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
+  phone: z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)').nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  website: z.string().url().nullable().optional(),
+  facebookUrl: z.string().url().nullable().optional(),
+  instagramUrl: z.string().url().nullable().optional(),
+  telegramUrl: z.string().url().nullable().optional(),
+  tiktokUrl: z.string().url().nullable().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
 });

@@ -22,18 +22,33 @@ export class InvitationController {
     }
   }
 
+  async getInvitationDetails(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+
+      const { invitationToken } = req.params;
+
+      const invitationDetails = await invitationService.getInvitationDetails(invitationToken);
+
+      res.json(successResponse('Invitation details retrieved', invitationDetails));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async acceptInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { phone, invitationId, verificationToken } = req.body;
+      const {verificationToken } = req.body;
       const authUserId = req.auth?.userId;
+      const invitationToken = req.params.invitationToken;
 
-      const result = await invitationService.acceptInvitation(phone, invitationId, verificationToken, authUserId);
+      const result = await invitationService.acceptInvitation(invitationToken, authUserId, verificationToken);
 
       res.json(successResponse('Invitation accepted successfully', result));
     } catch (error) {
       next(error);
     }
   }
+
 
   async getInvitations(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {

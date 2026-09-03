@@ -25,3 +25,8 @@ export async function sendOtpSms(phone: string, otp: string): Promise<void> {
   const provider = getSmsProvider();
   await provider.sendOtp(phone, otp);
 }
+
+export async function sendInvitationLinkSms(phone: string, invitationUrl: string): Promise<void> {
+  const provider = getSmsProvider();
+  await provider.sendInvitationLink(phone, invitationUrl);
+}

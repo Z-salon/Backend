@@ -7,11 +7,24 @@ export class ConsoleSmsProvider implements SmsProvider {
       console.warn('⚠️ ConsoleSmsProvider should not be used in production');
       return;
     }
-    
+
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('📱 SMS OTP (Development Mode)');
     console.log(`📞 To: ${phone}`);
     console.log(`🔐 OTP: ${otp}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
+
+  async sendInvitationLink(phone: string, invitationUrl: string): Promise<void> {
+    if (config.isProduction) {
+      console.warn('⚠️ ConsoleSmsProvider should not be used in production');
+      return;
+    }
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📱 Invitation SMS (Development Mode)');
+    console.log(`📞 To: ${phone}`);
+    console.log(`🔗 Invite link: ${invitationUrl}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   }
 }

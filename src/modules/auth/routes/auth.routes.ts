@@ -89,7 +89,7 @@ router.post(
 
 /**
  * @openapi
- * /api/v1/auth/register/invitation:
+ * /api/v1/auth/register/{invitationToken}/invitation:
  *   post:
  *     tags: [Auth]
  *     summary: Register a new invited user account before accepting an invitation
@@ -104,7 +104,7 @@ router.post(
  *         description: Invitation registration request created successfully
  */
 router.post(
-  '/register/invitation',
+  '/register/{invitationToken}/invitation',
   bodyValidator(invitationRegisterSchema),
   authController.registerInvitation.bind(authController)
 );

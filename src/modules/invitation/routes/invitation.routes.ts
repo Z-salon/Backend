@@ -43,6 +43,32 @@ router.post(
 
 /**
  * @openapi
+ * /api/v1/invitations/{invitationToken}/details:
+ *   get:
+ *     tags: [Invitations]
+ *     summary: Get details of an invitation
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: invitationToken
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Invitations retrieved successfully
+ */
+router.get(
+  '/invitations/{invitationToken}/details',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('MEMBER_INVITE'),
+  invitationController.getInvitationDetails.bind(invitationController)
+);
+
+/**
+ * @openapi
  * /api/v1/businesses/{businessId}/invitations:
  *   get:
  *     tags: [Invitations]
@@ -100,7 +126,7 @@ router.delete(
 
 /**
  * @openapi
- * /api/v1/invitations/accept:
+ * /api/v1/invitations/{invitationToken}/accept:
  *   post:
  *     tags: [Invitations]
  *     summary: Accept an invitation with a verification token
@@ -115,7 +141,7 @@ router.delete(
  *         description: Invitation accepted successfully
  */
 router.post(
-  '/invitations/accept',
+  '/invitations/{invitationToken}/accept',
   optionalAuth,
   bodyValidator(invitationAcceptSchema),
   invitationController.acceptInvitation.bind(invitationController)

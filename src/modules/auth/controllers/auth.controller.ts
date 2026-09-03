@@ -4,6 +4,7 @@ import { authService } from '../services/auth.service';
 import { sessionService } from '../services/session.service';
 import { successResponse } from '../../../utils/api-response';
 import { normalizePhone } from '../../../utils/phone';
+import { date } from 'zod/v4';
 
 export class AuthController {
   async requestOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -48,9 +49,10 @@ export class AuthController {
 
   async registerInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { phone, password } = req.body;
+      const { password } = req.body;
+      const { invitationToken } = req.params;
 
-      await authService.registerInvitation({ phone, password });
+      await authService.registerInvitation(invitationToken, { password });
 
       res.status(201).json(successResponse('If this phone number is eligible, a verification code has been sent.'));
     } catch (error) {
