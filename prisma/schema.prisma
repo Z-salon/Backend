@@ -89,81 +89,95 @@ enum DepositPolicyType {
   FULL
 }
 
-model User {
-  id                String    @id @default(uuid())
-  phone             String    @unique
-  passwordHash      String?
-  phoneVerifiedAt   DateTime?
-  status            UserStatus @default(PENDING_VERIFICATION)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+enum StaffStatus {
+  ACTIVE
+  INACTIVE
+}
 
-  memberships       BusinessMember[]
-  sessions          Session[]
-  otpChallenges     OtpChallenge[]
-  business          Business[]
+enum ProficiencyLevel {
+  TRAINEE
+  JUNIOR
+  SENIOR
+  EXPERT
+}
+
+model User {
+  id              String     @id @default(uuid())
+  phone           String     @unique
+  passwordHash    String?
+  phoneVerifiedAt DateTime?
+  status          UserStatus @default(PENDING_VERIFICATION)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  memberships         BusinessMember[]
+  sessions            Session[]
+  otpChallenges       OtpChallenge[]
+  business            Business[]
   acceptedInvitations BusinessInvitation[] @relation("AcceptedInvitations")
-  auditLogs         AuditLog[]
+  auditLogs           AuditLog[]
+  staffProfiles       Staff[]
 
   @@index([phone])
   @@index([status])
 }
 
 model Business {
-  id               String         @id @default(uuid())
-  name             String
-  slug             String         @unique
-  currency         String         @default("ETB")
-  timezone         String         @default("Africa/Addis_Ababa")
-  status           BusinessStatus @default(ACTIVE)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  owner_id         String         
-  user             User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  id        String         @id @default(uuid())
+  name      String
+  slug      String         @unique
+  currency  String         @default("ETB")
+  timezone  String         @default("Africa/Addis_Ababa")
+  status    BusinessStatus @default(ACTIVE)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  owner_id  String
+  user      User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
   // Branding
-  logoUrl          String?
-  coverImageUrl    String?
-  primaryColor     String?
-  secondaryColor   String?
+  logoUrl        String?
+  coverImageUrl  String?
+  primaryColor   String?
+  secondaryColor String?
 
   // Public Business Information
-  description      String?
-  aboutUs          String?
-  address          String?
-  phone            String?
-  email            String?
-  website          String?
+  description String?
+  aboutUs     String?
+  address     String?
+  phone       String?
+  email       String?
+  website     String?
 
   // Social Media
-  facebookUrl      String?
-  instagramUrl     String?
-  telegramUrl      String?
-  tiktokUrl        String?
+  facebookUrl  String?
+  instagramUrl String?
+  telegramUrl  String?
+  tiktokUrl    String?
 
-  members          BusinessMember[]
-  roles            Role[]
-  invitations      BusinessInvitation[]
-  branches         Branch[]
-  auditLogs        AuditLog[]
+  members           BusinessMember[]
+  roles             Role[]
+  invitations       BusinessInvitation[]
+  branches          Branch[]
+  auditLogs         AuditLog[]
   serviceCategories ServiceCategory[]
-  services         Service[]
+  services          Service[]
+  staff             Staff[]
 
   @@index([status])
   @@index([slug])
 }
 
 model Branch {
-  id          String   @id @default(uuid())
-  businessId  String
-  name        String
-  address     String?
-  timezone    String
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  businessId String
+  name       String
+  address    String?
+  timezone   String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business               Business                          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   userRoleBranches       UserRoleBranch[]
   invitationRoleBranches InvitationRoleBranch[]
   weeklySchedules        BranchWeeklySchedule[]
@@ -171,6 +185,7 @@ model Branch {
   bookingConfig          BranchBookingConfig?
   categoryAssignments    ServiceCategoryBranchAssignment[]
   serviceAssignments     ServiceBranchAssignment[]
+  staff                  Staff[]
 
   @@unique([businessId, name])
   @@index([businessId])
@@ -178,20 +193,20 @@ model Branch {
 }
 
 model BusinessMember {
-  id            String       @id @default(uuid())
-  businessId    String
-  userId        String
-  status        MemberStatus @default(INVITED)
-  invitedAt     DateTime     @default(now())
-  joinedAt      DateTime?
-  suspendedAt   DateTime?
-  removedAt     DateTime?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id          String       @id @default(uuid())
+  businessId  String
+  userId      String
+  status      MemberStatus @default(INVITED)
+  invitedAt   DateTime     @default(now())
+  joinedAt    DateTime?
+  suspendedAt DateTime?
+  removedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
-  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userRoles     UserRole[]
+  business        Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userRoles       UserRole[]
   sentInvitations BusinessInvitation[] @relation("SentInvitations")
 
   @@unique([businessId, userId])
@@ -213,19 +228,19 @@ model Permission {
 }
 
 model Role {
-  id            String     @id @default(uuid())
-  businessId    String
-  name          String
-  description   String?
-  type          RoleType   @default(CUSTOM)
-  systemKey     String?
-  isActive      Boolean    @default(true)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id          String   @id @default(uuid())
+  businessId  String
+  name        String
+  description String?
+  type        RoleType @default(CUSTOM)
+  systemKey   String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  business      Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  permissions   RolePermission[]
-  userRoles     UserRole[]
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  permissions     RolePermission[]
+  userRoles       UserRole[]
   invitationRoles InvitationRole[]
 
   @@unique([businessId, name])
@@ -239,76 +254,74 @@ model RolePermission {
   roleId       String
   permissionId String
 
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
 }
 
 model UserRole {
-  id                String         @id @default(uuid())
-  businessMemberId  String
-  roleId            String
-  scopeType         RoleScopeType  @default(BUSINESS)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id               String        @id @default(uuid())
+  businessMemberId String
+  roleId           String
+  scopeType        RoleScopeType @default(BUSINESS)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  businessMember    BusinessMember @relation(fields: [businessMemberId], references: [id], onDelete: Cascade)
-  role              Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  branches          UserRoleBranch[]
+  businessMember BusinessMember   @relation(fields: [businessMemberId], references: [id], onDelete: Cascade)
+  role           Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branches       UserRoleBranch[]
 
+  @@unique([businessMemberId, roleId, scopeType])
   @@index([businessMemberId])
   @@index([roleId])
   @@index([scopeType])
-  @@unique([businessMemberId, roleId, scopeType])
-
 }
 
 model UserRoleBranch {
   userRoleId String
   branchId   String
 
-  userRole   UserRole @relation(fields: [userRoleId], references: [id], onDelete: Cascade)
-  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userRole UserRole @relation(fields: [userRoleId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@id([userRoleId, branchId])
   @@unique([userRoleId, branchId])
-
 }
 
 model RegistrationRequest {
-  id            String    @id @default(uuid())
-  phone         String    @unique
-  passwordHash  String
-  businessName  String
-  currency      String
-  timezone      String
-  status        String    @default("PENDING")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  expiresAt     DateTime?
+  id           String    @id @default(uuid())
+  phone        String    @unique
+  passwordHash String
+  businessName String
+  currency     String
+  timezone     String
+  status       String    @default("PENDING")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  expiresAt    DateTime?
 
   @@index([phone])
   @@index([status])
 }
 
 model OtpChallenge {
-  id                     String       @id @default(uuid())
-  phone                  String
-  purpose                OtpPurpose
-  otpHash                String
-  verificationTokenHash  String?
-  status                 OtpStatus    @default(PENDING)
-  attemptCount           Int          @default(0)
-  maxAttempts            Int          @default(5)
-  expiresAt              DateTime
-  verifiedAt             DateTime?
-  consumedAt             DateTime?
-  requestIp              String?
-  userAgent              String?
-  userId                 String?
-  user                   User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt              DateTime     @default(now())
+  id                    String     @id @default(uuid())
+  phone                 String
+  purpose               OtpPurpose
+  otpHash               String
+  verificationTokenHash String?
+  status                OtpStatus  @default(PENDING)
+  attemptCount          Int        @default(0)
+  maxAttempts           Int        @default(5)
+  expiresAt             DateTime
+  verifiedAt            DateTime?
+  consumedAt            DateTime?
+  requestIp             String?
+  userAgent             String?
+  userId                String?
+  user                  User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt             DateTime   @default(now())
 
   @@index([phone, purpose, status])
   @@index([expiresAt])
@@ -316,21 +329,21 @@ model OtpChallenge {
 }
 
 model Session {
-  id              String        @id @default(uuid())
-  userId          String
+  id               String        @id @default(uuid())
+  userId           String
   refreshTokenHash String
-  status          SessionStatus @default(ACTIVE)
-  deviceName      String?
-  userAgent       String?
-  ipAddress       String?
-  expiresAt       DateTime
-  lastUsedAt      DateTime      @default(now())
-  revokedAt       DateTime?
-  revokeReason    String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  status           SessionStatus @default(ACTIVE)
+  deviceName       String?
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  lastUsedAt       DateTime      @default(now())
+  revokedAt        DateTime?
+  revokeReason     String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
@@ -339,24 +352,24 @@ model Session {
 }
 
 model BusinessInvitation {
-  id                  String             @id @default(uuid())
-  businessId          String
-  phone               String
-  tokenHash           String             @unique
-  status              InvitationStatus   @default(PENDING)
-  expiresAt           DateTime
-  invitedAt           DateTime           @default(now())
-  acceptedAt          DateTime?
-  revokedAt           DateTime?
-  invitedByMemberId   String
-  acceptedByUserId    String?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  id                String           @id @default(uuid())
+  businessId        String
+  phone             String
+  tokenHash         String           @unique
+  status            InvitationStatus @default(PENDING)
+  expiresAt         DateTime
+  invitedAt         DateTime         @default(now())
+  acceptedAt        DateTime?
+  revokedAt         DateTime?
+  invitedByMemberId String
+  acceptedByUserId  String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
-  business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  invitedByMember     BusinessMember     @relation("SentInvitations", fields: [invitedByMemberId], references: [id], onDelete: Cascade)
-  acceptedByUser      User?              @relation("AcceptedInvitations", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
-  roles               InvitationRole[]
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invitedByMember BusinessMember   @relation("SentInvitations", fields: [invitedByMemberId], references: [id], onDelete: Cascade)
+  acceptedByUser  User?            @relation("AcceptedInvitations", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+  roles           InvitationRole[]
 
   @@index([businessId])
   @@index([phone])
@@ -367,15 +380,15 @@ model BusinessInvitation {
 }
 
 model InvitationRole {
-  id            String            @id @default(uuid())
-  invitationId  String
-  roleId        String
-  scopeType     RoleScopeType     @default(BUSINESS)
-  createdAt     DateTime          @default(now())
+  id           String        @id @default(uuid())
+  invitationId String
+  roleId       String
+  scopeType    RoleScopeType @default(BUSINESS)
+  createdAt    DateTime      @default(now())
 
-  invitation    BusinessInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
-  role          Role              @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  branches      InvitationRoleBranch[]
+  invitation BusinessInvitation     @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  role       Role                   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branches   InvitationRoleBranch[]
 
   @@index([invitationId])
   @@index([roleId])
@@ -386,8 +399,8 @@ model InvitationRoleBranch {
   invitationRoleId String
   branchId         String
 
-  invitationRole   InvitationRole @relation(fields: [invitationRoleId], references: [id], onDelete: Cascade)
-  branch           Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  invitationRole InvitationRole @relation(fields: [invitationRoleId], references: [id], onDelete: Cascade)
+  branch         Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@id([invitationRoleId, branchId])
   @@unique([invitationRoleId, branchId])
@@ -404,8 +417,8 @@ model AuditLog {
   newValues  Json?
   createdAt  DateTime @default(now())
 
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  actor      User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  actor    User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([actorId])
@@ -414,73 +427,73 @@ model AuditLog {
 }
 
 model BranchWeeklySchedule {
-  id            String   @id @default(uuid())
-  branchId      String
-  dayOfWeek     Int
-  isClosed      Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id        String   @id @default(uuid())
+  branchId  String
+  dayOfWeek Int
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  intervals     BranchWeeklyHourInterval[]
+  branch    Branch                     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  intervals BranchWeeklyHourInterval[]
 
   @@unique([branchId, dayOfWeek])
   @@index([branchId])
 }
 
 model BranchWeeklyHourInterval {
-  id                String   @id @default(uuid())
-  weeklyScheduleId  String
-  startTime         DateTime @db.Time(0)
-  endTime           DateTime @db.Time(0)
+  id               String   @id @default(uuid())
+  weeklyScheduleId String
+  startTime        DateTime @db.Time(0)
+  endTime          DateTime @db.Time(0)
 
-  weeklySchedule    BranchWeeklySchedule @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
+  weeklySchedule BranchWeeklySchedule @relation(fields: [weeklyScheduleId], references: [id], onDelete: Cascade)
 
   @@index([weeklyScheduleId])
 }
 
 model BranchDateOverride {
-  id          String   @id @default(uuid())
-  branchId    String
-  date        DateTime @db.Date
-  isClosed    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  branchId  String
+  date      DateTime @db.Date
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  intervals   BranchDateOverrideInterval[]
+  branch    Branch                       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  intervals BranchDateOverrideInterval[]
 
   @@unique([branchId, date])
   @@index([branchId, date])
 }
 
 model BranchDateOverrideInterval {
-  id          String   @id @default(uuid())
-  overrideId  String
-  startTime   DateTime @db.Time(0)
-  endTime     DateTime @db.Time(0)
+  id         String   @id @default(uuid())
+  overrideId String
+  startTime  DateTime @db.Time(0)
+  endTime    DateTime @db.Time(0)
 
-  override    BranchDateOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+  override BranchDateOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
 
   @@index([overrideId])
 }
 
 model BranchBookingConfig {
-  id                       String   @id @default(uuid())
-  branchId                 String   @unique
-  onlineBookingEnabled     Boolean  @default(true)
-  walkInEnabled            Boolean  @default(true)
-  bookingApprovalRequired  Boolean  @default(false)
-  minimumAdvanceBookingMinutes Int  @default(120)
-  maximumAdvanceBookingDays    Int  @default(30)
-  cancellationWindowMinutes    Int  @default(60)
-  reschedulingEnabled          Boolean @default(true)
-  bookingBufferMinutes         Int  @default(0)
-  waitlistEnabled              Boolean @default(false)
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                           String   @id @default(uuid())
+  branchId                     String   @unique
+  onlineBookingEnabled         Boolean  @default(true)
+  walkInEnabled                Boolean  @default(true)
+  bookingApprovalRequired      Boolean  @default(false)
+  minimumAdvanceBookingMinutes Int      @default(120)
+  maximumAdvanceBookingDays    Int      @default(30)
+  cancellationWindowMinutes    Int      @default(60)
+  reschedulingEnabled          Boolean  @default(true)
+  bookingBufferMinutes         Int      @default(0)
+  waitlistEnabled              Boolean  @default(false)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
 
-  branch                   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 }
 
 model ServiceCategory {
@@ -490,13 +503,14 @@ model ServiceCategory {
   description String?
   status      ServiceCategoryStatus @default(ACTIVE)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  services          Service[]
-  branchAssignments ServiceCategoryBranchAssignment[]
+  services            Service[]
+  branchAssignments   ServiceCategoryBranchAssignment[]
+  staffQualifications StaffCategoryQualification[]
 
   @@unique([businessId, name])
   @@index([businessId])
@@ -541,7 +555,8 @@ model Service {
   business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
   category ServiceCategory @relation(fields: [categoryId], references: [id])
 
-  branchAssignments ServiceBranchAssignment[]
+  branchAssignments   ServiceBranchAssignment[]
+  staffQualifications StaffServiceQualification[]
 
   @@index([businessId])
   @@index([categoryId])
@@ -564,4 +579,181 @@ model ServiceBranchAssignment {
   @@index([serviceId])
   @@index([branchId])
   @@index([isActive])
+}
+
+model Staff {
+  id         String  @id @default(uuid())
+  businessId String
+  branchId   String
+  userId     String?
+
+  firstName String
+  lastName  String
+  email     String?
+  phone     String?
+  title     String?
+  bio       String?
+  status    StaffStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  categoryQualifications StaffCategoryQualification[]
+  serviceQualifications  StaffServiceQualification[]
+  weeklySchedules        StaffWeeklyScheduleDay[]
+  weeklyBreaks           StaffWeeklyBreak[]
+  scheduleOverrides      StaffScheduleOverride[]
+  breakOverrides         StaffBreakOverride[]
+  timeOffs               StaffTimeOff[]
+
+  @@index([businessId])
+  @@index([branchId])
+  @@index([status])
+  @@index([businessId, branchId])
+}
+
+model StaffCategoryQualification {
+  id         String   @id @default(uuid())
+  staffId    String
+  categoryId String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  staff    Staff           @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  category ServiceCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, categoryId])
+  @@index([staffId])
+  @@index([categoryId])
+}
+
+model StaffServiceQualification {
+  id               String           @id @default(uuid())
+  staffId          String
+  serviceId        String
+  proficiencyLevel ProficiencyLevel @default(SENIOR)
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  staff   Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, serviceId])
+  @@index([staffId])
+  @@index([serviceId])
+}
+
+model StaffWeeklyScheduleDay {
+  id        String   @id @default(uuid())
+  staffId   String
+  dayOfWeek Int
+  isWorking Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff     Staff              @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  intervals StaffWeeklyHours[]
+
+  @@unique([staffId, dayOfWeek])
+  @@index([staffId])
+}
+
+model StaffWeeklyHours {
+  id            String   @id @default(uuid())
+  scheduleDayId String
+  intervalStart DateTime @db.Time(0)
+  intervalEnd   DateTime @db.Time(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  scheduleDay StaffWeeklyScheduleDay @relation(fields: [scheduleDayId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleDayId])
+}
+
+model StaffWeeklyBreak {
+  id         String   @id @default(uuid())
+  staffId    String
+  dayOfWeek  Int
+  breakStart DateTime @db.Time(0)
+  breakEnd   DateTime @db.Time(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+}
+
+model StaffScheduleOverride {
+  id        String   @id @default(uuid())
+  staffId   String
+  date      DateTime @db.Date
+  isWorking Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff     Staff                           @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  intervals StaffScheduleOverrideInterval[]
+
+  @@unique([staffId, date])
+  @@index([staffId, date])
+}
+
+model StaffScheduleOverrideInterval {
+  id            String   @id @default(uuid())
+  overrideId    String
+  intervalStart DateTime @db.Time(0)
+  intervalEnd   DateTime @db.Time(0)
+
+  override StaffScheduleOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+
+  @@index([overrideId])
+}
+
+model StaffBreakOverride {
+  id        String   @id @default(uuid())
+  staffId   String
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff     Staff                        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  intervals StaffBreakOverrideInterval[]
+
+  @@unique([staffId, date])
+  @@index([staffId, date])
+}
+
+model StaffBreakOverrideInterval {
+  id         String   @id @default(uuid())
+  overrideId String
+  breakStart DateTime @db.Time(0)
+  breakEnd   DateTime @db.Time(0)
+
+  override StaffBreakOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+
+  @@index([overrideId])
+}
+
+model StaffTimeOff {
+  id            String    @id @default(uuid())
+  staffId       String
+  date          DateTime  @db.Date
+  allDay        Boolean   @default(true)
+  intervalStart DateTime? @db.Time(0)
+  intervalEnd   DateTime? @db.Time(0)
+  reason        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, date])
 }
