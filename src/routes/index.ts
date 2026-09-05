@@ -8,6 +8,7 @@ import branchRoutes from '../modules/business/routes/branch.routes';
 import serviceCategoryRoutes from '../modules/services/routes/service-category.routes';
 import serviceRoutes from '../modules/services/routes/service.routes';
 import staffRoutes from '../modules/staff/routes/staff.routes';
+import customerRoutes from '../modules/customer/routes/customer.routes';
 import { config } from '../config/env';
 
 const router = Router();
@@ -21,6 +22,7 @@ router.use(`${config.apiPrefix}`, branchRoutes);
 router.use(`${config.apiPrefix}`, serviceCategoryRoutes);
 router.use(`${config.apiPrefix}`, serviceRoutes);
 router.use(`${config.apiPrefix}`, staffRoutes);
+router.use(`${config.apiPrefix}`, customerRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });

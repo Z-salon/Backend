@@ -101,6 +101,12 @@ enum ProficiencyLevel {
   EXPERT
 }
 
+enum CustomerStatus {
+  ACTIVE
+  PENDING_DETAILS
+  ARCHIVED
+}
+
 model User {
   id              String     @id @default(uuid())
   phone           String     @unique
@@ -117,6 +123,7 @@ model User {
   acceptedInvitations BusinessInvitation[] @relation("AcceptedInvitations")
   auditLogs           AuditLog[]
   staffProfiles       Staff[]
+  createdCustomers    Customer[]           @relation("CustomerCreatedBy")
 
   @@index([phone])
   @@index([status])
@@ -162,6 +169,7 @@ model Business {
   serviceCategories ServiceCategory[]
   services          Service[]
   staff             Staff[]
+  customers         Customer[]
 
   @@index([status])
   @@index([slug])
@@ -756,4 +764,44 @@ model StaffTimeOff {
   staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId, date])
+}
+
+model Customer {
+  id         String         @id @default(uuid())
+  businessId String
+  firstName  String
+  lastName   String
+  status     CustomerStatus @default(ACTIVE)
+
+  createdById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  phones CustomerPhone[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, lastName, firstName])
+}
+
+model CustomerPhone {
+  id              String  @id @default(uuid())
+  businessId      String
+  customerId      String
+  phone           String
+  normalizedPhone String
+  isPrimary       Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, normalizedPhone])
+  @@index([customerId])
+  @@index([businessId])
 }
