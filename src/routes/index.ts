@@ -9,6 +9,7 @@ import serviceCategoryRoutes from '../modules/services/routes/service-category.r
 import serviceRoutes from '../modules/services/routes/service.routes';
 import staffRoutes from '../modules/staff/routes/staff.routes';
 import customerRoutes from '../modules/customer/routes/customer.routes';
+import availabilityRoutes from '../modules/services/routes/availability.routes';
 import { config } from '../config/env';
 
 const router = Router();
@@ -21,8 +22,9 @@ router.use(`/`, businessConfigurationRoutes);
 router.use(`/`, branchRoutes);
 router.use(`/`, serviceCategoryRoutes);
 router.use(`/`, serviceRoutes);
-router.use(`/`, staffRoutes);
-router.use(`/`, customerRoutes);
+router.use(`${config.apiPrefix}`, staffRoutes);
+router.use(`${config.apiPrefix}`, customerRoutes);
+router.use(`${config.apiPrefix}`, availabilityRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });

@@ -68,3 +68,64 @@ export interface EffectiveServiceConfig {
   depositAmount: number | null;
   isActive: boolean;
 }
+
+export type SlotSource = 'PUBLIC' | 'INTERNAL';
+
+export interface GetAvailableSlotsInput {
+  businessId: string;
+  branchId: string;
+  serviceId: string;
+  date: string; // YYYY-MM-DD
+  staffId?: string;
+  source?: SlotSource;
+}
+
+export interface AvailableSlotResponse {
+  startTime: string; // ISO string with offset
+  serviceEndTime: string;
+  reservedEndTime: string;
+  staff: {
+    id: string;
+    firstName: string;
+    lastName: string;
+  };
+}
+
+export interface AvailabilityResponse {
+  date: string;
+  branchId: string;
+  serviceId: string;
+  timezone: string;
+  availableSlots: AvailableSlotResponse[];
+}
+
+export interface ValidateSlotInput {
+  businessId: string;
+  branchId: string;
+  serviceId: string;
+  staffId: string;
+  startTime: string; // ISO string with offset
+  source?: SlotSource;
+}
+
+export type ValidationReasonCode = 
+  | 'BRANCH_CLOSED'
+  | 'SERVICE_NOT_OFFERED'
+  | 'STAFF_INACTIVE'
+  | 'STAFF_NOT_QUALIFIED'
+  | 'STAFF_NOT_WORKING'
+  | 'STAFF_ON_BREAK'
+  | 'STAFF_TIME_OFF'
+  | 'SLOT_OUTSIDE_BRANCH_HOURS'
+  | 'SLOT_CONFLICT'
+  | 'MIN_ADVANCE_VIOLATION'
+  | 'MAX_ADVANCE_VIOLATION'
+  | 'INVALID_START_TIME'
+  | 'BUSINESS_INACTIVE';
+
+export interface SlotValidationResponse {
+  valid: boolean;
+  overrideAllowed?: boolean;
+  conflictType?: ValidationReasonCode;
+  reason?: string;
+}

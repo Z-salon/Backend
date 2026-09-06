@@ -1,72 +1,61 @@
+import { DateTime } from 'luxon';
 import { prisma } from '../../../libs/prisma';
-import { ApiError, ErrorCodes } from '../../../utils/api-error';
-import { EmployeeAssignmentMode, DepositPolicyType, ServiceStatus, Prisma } from '@prisma/client';
-import { ServiceBranchConfig, AvailabilityValidationResult, ServiceBranchConfigInput, EffectiveServiceConfig } from './availability.types';
+import { ApiError } from '../../../utils/api-error';
+import { EmployeeAssignmentMode } from '@prisma/client';
+import {
+  ServiceBranchConfig,
+  AvailabilityValidationResult,
+  ServiceBranchConfigInput,
+  EffectiveServiceConfig,
+  GetAvailableSlotsInput,
+  AvailabilityResponse,
+  AvailableSlotResponse,
+  ValidateSlotInput,
+  SlotValidationResponse,
+  ValidationReasonCode,
+} from './availability.types';
+import { availabilityRepository } from './availability.repository';
+import {
+  getBranchOperatingIntervals,
+  getStaffEffectiveIntervals,
+} from './staff-availability.service';
+import { generateSlots, isSlotFeasible } from './slot-generator';
+import { Prisma } from '@prisma/client';
 
 export class AvailabilityService {
-  /**
-   * Resolves the effective service configuration for a specific branch.
-   * Branch-specific values override service defaults when not null.
-   */
+  // ─────────────────────────────────────────────────────────────
+  // PART 1 METHODS — retained from existing implementation
+  // ─────────────────────────────────────────────────────────────
+
   async resolveServiceBranchConfig(
     serviceId: string,
     branchId: string
   ): Promise<ServiceBranchConfig | null> {
     const assignment = await prisma.serviceBranchAssignment.findUnique({
-      where: {
-        serviceId_branchId: { serviceId, branchId },
-      },
+      where: { serviceId_branchId: { serviceId, branchId } },
       include: {
-        service: {
-          include: {
-            category: true,
-          },
-        },
+        service: { include: { category: true } },
         branch: true,
       },
     });
 
-    if (!assignment || !assignment.isActive) {
-      return null;
-    }
+    if (!assignment || !assignment.isActive) return null;
+    if (!assignment.service || assignment.service.status !== 'ACTIVE') return null;
+    if (!assignment.branch || !assignment.branch.isActive) return null;
+    if (!assignment.service.category || assignment.service.category.status !== 'ACTIVE') return null;
 
-    if (!assignment.service || assignment.service.status !== 'ACTIVE') {
-      return null;
-    }
-
-    if (!assignment.branch || !assignment.branch.isActive) {
-      return null;
-    }
-
-    if (!assignment.service.category || assignment.service.category.status !== 'ACTIVE') {
-      return null;
-    }
-
-    // Check category is active at branch
     const catBranch = await prisma.serviceCategoryBranchAssignment.findUnique({
-      where: {
-        categoryId_branchId: {
-          categoryId: assignment.service.categoryId,
-          branchId,
-        },
-      },
+      where: { categoryId_branchId: { categoryId: assignment.service.categoryId, branchId } },
     });
-
-    if (!catBranch || !catBranch.isActive) {
-      return null;
-    }
-
-    const effectiveDurationMinutes = assignment.durationMinutes ?? assignment.service.durationMinutes;
-    const effectivePrice = assignment.price ? Number(assignment.price) : Number(assignment.service.price);
-    const effectiveBufferMinutes = assignment.bufferMinutes;
+    if (!catBranch || !catBranch.isActive) return null;
 
     return {
       serviceId: assignment.serviceId,
       branchId: assignment.branchId,
       isActive: assignment.isActive,
-      effectiveDurationMinutes,
-      effectivePrice,
-      bufferMinutes: effectiveBufferMinutes,
+      effectiveDurationMinutes: assignment.durationMinutes ?? assignment.service.durationMinutes,
+      effectivePrice: assignment.price ? Number(assignment.price) : Number(assignment.service.price),
+      bufferMinutes: assignment.bufferMinutes,
       employeeAssignmentMode: assignment.service.employeeAssignmentMode,
       showPriceToCustomer: assignment.service.showPriceToCustomer,
       depositPolicyType: assignment.service.depositPolicyType,
@@ -74,140 +63,51 @@ export class AvailabilityService {
     };
   }
 
-  /**
-   * Validates that a service is bookable at a branch and returns the effective configuration.
-   */
-  async validateServiceAtBranch(
-    serviceId: string,
-    branchId: string
-  ): Promise<AvailabilityValidationResult> {
+  async validateServiceAtBranch(serviceId: string, branchId: string): Promise<AvailabilityValidationResult> {
     const config = await this.resolveServiceBranchConfig(serviceId, branchId);
+    if (!config) return { isValid: false, errors: ['Service is not available at this branch'] };
+    if (config.effectiveDurationMinutes <= 0) return { isValid: false, errors: ['Service duration must be positive'] };
+    if (config.effectivePrice < 0) return { isValid: false, errors: ['Service price cannot be negative'] };
+    if (config.bufferMinutes < 0) return { isValid: false, errors: ['Buffer minutes cannot be negative'] };
 
-    if (!config) {
-      return {
-        isValid: false,
-        errors: ['Service is not available at this branch'],
-      };
-    }
-
-    if (config.effectiveDurationMinutes <= 0) {
-      return {
-        isValid: false,
-        errors: ['Service duration must be positive'],
-      };
-    }
-
-    if (config.effectivePrice < 0) {
-      return {
-        isValid: false,
-        errors: ['Service price cannot be negative'],
-      };
-    }
-
-    if (config.bufferMinutes < 0) {
-      return {
-        isValid: false,
-        errors: ['Buffer minutes cannot be negative'],
-      };
-    }
-
-    const service = await prisma.service.findUnique({
-      where: { id: serviceId },
-      include: { category: true, branchAssignments: true },
-    });
-
-    const branch = await prisma.branch.findUnique({
-      where: { id: branchId },
-    });
-
+    const [service, branch] = await Promise.all([
+      prisma.service.findUnique({ where: { id: serviceId }, include: { category: true, branchAssignments: true } }),
+      prisma.branch.findUnique({ where: { id: branchId } }),
+    ]);
     const business = branch ? await prisma.business.findUnique({ where: { id: branch.businessId } }) : null;
 
-    return {
-      isValid: true,
-      errors: [],
-      service,
-      branch,
-      business,
-      effectiveConfig: config,
-    };
+    return { isValid: true, errors: [], service, branch, business, effectiveConfig: config };
   }
 
-  /**
-   * Gets the booking block duration (service duration + buffer) for a service at a branch.
-   */
   async getBookingBlockMinutes(serviceId: string, branchId: string): Promise<number | null> {
     const config = await this.resolveServiceBranchConfig(serviceId, branchId);
     if (!config) return null;
     return config.effectiveDurationMinutes + config.bufferMinutes;
   }
 
-  /**
-   * Validates and creates/updates a service branch configuration.
-   * Uses transaction to ensure atomicity.
-   */
-  async upsertServiceBranchConfig(
-    input: ServiceBranchConfigInput,
-    userId: string
-  ): Promise<{ config: ServiceBranchConfig; isNew: boolean }> {
-    // Validate service and branch belong to same business
+  async upsertServiceBranchConfig(input: ServiceBranchConfigInput, userId: string) {
     const [service, branch] = await Promise.all([
       prisma.service.findUnique({ where: { id: input.serviceId }, include: { category: true } }),
       prisma.branch.findUnique({ where: { id: input.branchId } }),
     ]);
 
-    if (!service) {
-      throw new ApiError(404, 'Service not found', ErrorCodes.NOT_FOUND);
-    }
+    if (!service) throw ApiError.notFound('Service not found');
+    if (!branch) throw ApiError.notFound('Branch not found');
+    if (service.businessId !== branch.businessId) throw ApiError.badRequest('Service and branch must belong to the same business');
+    if (!branch.isActive) throw ApiError.badRequest('Branch is not active');
+    if (service.status !== 'ACTIVE') throw ApiError.badRequest('Service is not active');
 
-    if (!branch) {
-      throw new ApiError(404, 'Branch not found', ErrorCodes.NOT_FOUND);
-    }
-
-    if (service.businessId !== branch.businessId) {
-      throw new ApiError(400, 'Service and branch must belong to the same business', ErrorCodes.BRANCH_NOT_IN_BUSINESS);
-    }
-
-    // Validate branch is active
-    if (!branch.isActive) {
-      throw new ApiError(400, 'Branch is not active', ErrorCodes.BAD_REQUEST);
-    }
-
-    // Validate service is active
-    if (service.status !== 'ACTIVE') {
-      throw new ApiError(400, 'Service is not active', ErrorCodes.VALIDATION_ERROR);
-    }
-
-    // Validate category is active at branch
     const catBranch = await prisma.serviceCategoryBranchAssignment.findUnique({
-      where: {
-        categoryId_branchId: { categoryId: service.categoryId, branchId: input.branchId },
-      },
+      where: { categoryId_branchId: { categoryId: service.categoryId, branchId: input.branchId } },
     });
+    if (!catBranch || !catBranch.isActive) throw ApiError.badRequest('Service category is not active at this branch');
+    if (input.durationMinutes !== undefined && input.durationMinutes !== null && input.durationMinutes <= 0) throw ApiError.badRequest('Duration must be positive');
+    if (input.price !== undefined && input.price !== null && input.price < 0) throw ApiError.badRequest('Price cannot be negative');
+    if (input.bufferMinutes !== undefined && input.bufferMinutes < 0) throw ApiError.badRequest('Buffer minutes cannot be negative');
 
-    if (!catBranch || !catBranch.isActive) {
-      throw new ApiError(400, 'Service category is not active at this branch', ErrorCodes.VALIDATION_ERROR);
-    }
-
-    // Validate duration
-    if (input.durationMinutes !== undefined && input.durationMinutes !== null && input.durationMinutes <= 0) {
-      throw new ApiError(400, 'Duration must be positive', ErrorCodes.VALIDATION_ERROR);
-    }
-
-    // Validate price
-    if (input.price !== undefined && input.price !== null && input.price < 0) {
-      throw new ApiError(400, 'Price cannot be negative', ErrorCodes.VALIDATION_ERROR);
-    }
-
-    // Validate buffer
-    if (input.bufferMinutes !== undefined && input.bufferMinutes < 0) {
-      throw new ApiError(400, 'Buffer minutes cannot be negative', ErrorCodes.VALIDATION_ERROR);
-    }
-
-    // Check existing assignment
     const existing = await prisma.serviceBranchAssignment.findUnique({
       where: { serviceId_branchId: { serviceId: input.serviceId, branchId: input.branchId } },
     });
-
     const isNew = !existing;
 
     const updated = await prisma.serviceBranchAssignment.upsert({
@@ -226,28 +126,16 @@ export class AvailabilityService {
         price: input.price ? new Prisma.Decimal(input.price) : null,
         bufferMinutes: input.bufferMinutes,
       },
-      include: {
-        branch: true,
-        service: { include: { category: true } },
-      },
+      include: { branch: true, service: { include: { category: true } } },
     });
 
     return { config: this.mapToConfig(updated), isNew };
   }
 
-  /**
-   * Gets the effective service configuration for display/booking.
-   * Includes all computed values.
-   */
   async getEffectiveServiceConfig(serviceId: string, branchId: string): Promise<EffectiveServiceConfig | null> {
     const config = await this.resolveServiceBranchConfig(serviceId, branchId);
     if (!config) return null;
-
-    const service = await prisma.service.findUnique({
-      where: { id: serviceId },
-      include: { category: true },
-    });
-
+    const service = await prisma.service.findUnique({ where: { id: serviceId }, include: { category: true } });
     if (!service) return null;
 
     return {
@@ -265,9 +153,6 @@ export class AvailabilityService {
     };
   }
 
-  /**
-   * Gets all effectively available services at a branch.
-   */
   async getAvailableServicesAtBranch(branchId: string, categoryId?: string) {
     return prisma.service.findMany({
       where: {
@@ -275,39 +160,21 @@ export class AvailabilityService {
         ...(categoryId ? { categoryId } : {}),
         category: {
           status: 'ACTIVE',
-          branchAssignments: {
-            some: {
-              branchId,
-              isActive: true,
-              branch: { isActive: true },
-            },
-          },
+          branchAssignments: { some: { branchId, isActive: true, branch: { isActive: true } } },
         },
-        branchAssignments: {
-          some: {
-            branchId,
-            isActive: true,
-          },
-        },
+        branchAssignments: { some: { branchId, isActive: true } },
       },
       include: {
         category: { select: { id: true, name: true, description: true } },
-        branchAssignments: {
-          where: { branchId },
-          include: { branch: { select: { id: true, name: true } } },
-        },
+        branchAssignments: { where: { branchId }, include: { branch: { select: { id: true, name: true } } } },
       },
       orderBy: { name: 'asc' },
     });
   }
 
-  /**
-   * Gets all services with their effective configuration at a branch.
-   */
   async getServicesWithEffectiveConfig(branchId: string, categoryId?: string) {
     const services = await this.getAvailableServicesAtBranch(branchId, categoryId);
-
-    const withConfig = await Promise.all(
+    return Promise.all(
       services.map(async (service) => {
         const config = await this.resolveServiceBranchConfig(service.id, branchId);
         const branchAssignment = service.branchAssignments.find((ba) => ba.branchId === branchId);
@@ -320,21 +187,327 @@ export class AvailabilityService {
         };
       })
     );
+  }
 
-    return withConfig;
+  // ─────────────────────────────────────────────────────────────
+  // AVAILABILITY ENGINE — Core Methods
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Main entry point: get all available slots for a service at a branch on a date.
+   */
+  async getAvailableSlots(input: GetAvailableSlotsInput): Promise<AvailabilityResponse> {
+    const { businessId, branchId, serviceId, date, staffId, source = 'PUBLIC' } = input;
+
+    // ── 1. Validate Entities ──────────────────────────────────────
+    const [business, branch] = await Promise.all([
+      prisma.business.findUnique({ where: { id: businessId } }),
+      prisma.branch.findUnique({ where: { id: branchId } }),
+    ]);
+
+    if (!business || business.status !== 'ACTIVE') {
+      throw ApiError.notFound('Business not found or inactive');
+    }
+    if (!branch || branch.businessId !== businessId) {
+      throw ApiError.notFound('Branch not found in this business');
+    }
+    if (!branch.isActive) {
+      throw ApiError.badRequest('Branch is not active');
+    }
+
+    const timezone = branch.timezone;
+    const serviceConfig = await this.resolveServiceBranchConfig(serviceId, branchId);
+    if (!serviceConfig) {
+      throw ApiError.badRequest('Service is not available at this branch');
+    }
+
+    // ── 2. Check Online Booking Policy ───────────────────────────
+    const bookingConfig = await availabilityRepository.getBranchBookingConfig(branchId);
+    if (source === 'PUBLIC' && bookingConfig && !bookingConfig.onlineBookingEnabled) {
+      return { date, branchId, serviceId, timezone, availableSlots: [] };
+    }
+
+    // ── 3. Parse date in branch timezone ─────────────────────────
+    const localDate = DateTime.fromISO(date, { zone: timezone });
+    if (!localDate.isValid) {
+      throw ApiError.badRequest('Invalid date format. Use YYYY-MM-DD.');
+    }
+
+    // ── 4. Enforce booking window policies ───────────────────────
+    const now = DateTime.now().setZone(timezone);
+    const dayStart = localDate.startOf('day');
+    const dayEnd = localDate.endOf('day');
+
+    if (bookingConfig) {
+      const earliestAllowedTime = now.plus({ minutes: bookingConfig.minimumAdvanceBookingMinutes });
+      const latestAllowedDate = now.plus({ days: bookingConfig.maximumAdvanceBookingDays });
+
+      if (dayEnd < earliestAllowedTime) {
+        return { date, branchId, serviceId, timezone, availableSlots: [] };
+      }
+      if (dayStart > latestAllowedDate) {
+        return { date, branchId, serviceId, timezone, availableSlots: [] };
+      }
+    }
+
+    const { effectiveDurationMinutes, bufferMinutes, employeeAssignmentMode } = serviceConfig;
+
+    // ── 5. Handle CUSTOMER_CHOOSES mode FIRST (before staff resolution) ──
+    if (employeeAssignmentMode === 'CUSTOMER_CHOOSES') {
+      if (!staffId) {
+        throw ApiError.badRequest('staffId is required for CUSTOMER_CHOOSES services');
+      }
+      // Verify the requested staff is active, belongs to this branch, and is qualified
+      const requestedStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
+      if (requestedStaff.length === 0) {
+        throw ApiError.badRequest('Staff not eligible for this service at this branch');
+      }
+
+      const slots = await this.buildSlotsForStaff(
+        requestedStaff[0],
+        branchId,
+        localDate,
+        timezone,
+        effectiveDurationMinutes,
+        bufferMinutes,
+        bookingConfig,
+        now
+      );
+
+      return { date, branchId, serviceId, timezone, availableSlots: slots };
+    }
+
+    // ── 6. Resolve Eligible Staff (SALON_ASSIGNS / ANY_AVAILABLE) ─
+    const eligibleStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
+    if (eligibleStaff.length === 0) {
+      return { date, branchId, serviceId, timezone, availableSlots: [] };
+    }
+
+    // ── 7. SALON_ASSIGNS / ANY_AVAILABLE: Collect slots from all eligible staff ──
+    // Build a map of startTime → first available staff (deterministic by staff ID order)
+    const slotMap = new Map<string, AvailableSlotResponse>();
+
+    for (const staff of eligibleStaff) {
+      const staffSlots = await this.buildSlotsForStaff(
+        staff,
+        branchId,
+        localDate,
+        timezone,
+        effectiveDurationMinutes,
+        bufferMinutes,
+        bookingConfig,
+        now
+      );
+      for (const slot of staffSlots) {
+        if (!slotMap.has(slot.startTime)) {
+          slotMap.set(slot.startTime, slot);
+        }
+      }
+    }
+
+    // Sort slots by startTime ascending
+    const sortedSlots = Array.from(slotMap.values()).sort((a, b) =>
+      a.startTime.localeCompare(b.startTime)
+    );
+
+    return { date, branchId, serviceId, timezone, availableSlots: sortedSlots };
+  }
+
+  /**
+   * Validates whether a specific slot is available.
+   * Returns structured results suitable for manager override decisions.
+   */
+  async validateSlot(input: ValidateSlotInput): Promise<SlotValidationResponse> {
+    const { businessId, branchId, serviceId, staffId, startTime, source = 'PUBLIC' } = input;
+
+    // ── Hard validation: entity existence & relationships ────────
+    const [business, branch, service, staff] = await Promise.all([
+      prisma.business.findUnique({ where: { id: businessId } }),
+      prisma.branch.findUnique({ where: { id: branchId } }),
+      prisma.service.findUnique({ where: { id: serviceId }, include: { category: true } }),
+      prisma.staff.findUnique({ where: { id: staffId } }),
+    ]);
+
+    if (!business || business.status !== 'ACTIVE') {
+      return { valid: false, overrideAllowed: false, conflictType: 'BUSINESS_INACTIVE', reason: 'Business not found or inactive' };
+    }
+    if (!branch || branch.businessId !== businessId || !branch.isActive) {
+      return { valid: false, overrideAllowed: false, conflictType: 'BRANCH_CLOSED', reason: 'Branch not found, not in this business, or inactive' };
+    }
+    if (!service || service.businessId !== businessId || service.status !== 'ACTIVE') {
+      return { valid: false, overrideAllowed: false, conflictType: 'SERVICE_NOT_OFFERED', reason: 'Service not found, not in this business, or inactive' };
+    }
+    if (!staff || staff.businessId !== businessId || staff.status !== 'ACTIVE') {
+      return { valid: false, overrideAllowed: false, conflictType: 'STAFF_INACTIVE', reason: 'Staff not found, not in this business, or inactive' };
+    }
+    if (staff.branchId !== branchId) {
+      return { valid: false, overrideAllowed: false, conflictType: 'STAFF_NOT_QUALIFIED', reason: 'Staff does not belong to this branch' };
+    }
+
+    const serviceConfig = await this.resolveServiceBranchConfig(serviceId, branchId);
+    if (!serviceConfig) {
+      return { valid: false, overrideAllowed: false, conflictType: 'SERVICE_NOT_OFFERED', reason: 'Service not available at this branch' };
+    }
+
+    const qualification = await prisma.staffServiceQualification.findFirst({
+      where: { staffId, serviceId, isActive: true },
+    });
+    if (!qualification) {
+      return { valid: false, overrideAllowed: false, conflictType: 'STAFF_NOT_QUALIFIED', reason: 'Staff is not qualified for this service' };
+    }
+
+    // ── Policy checks ─────────────────────────────────────────────
+    const timezone = branch.timezone;
+    const requestedStart = DateTime.fromISO(startTime).setZone(timezone);
+    if (!requestedStart.isValid) {
+      return { valid: false, overrideAllowed: false, conflictType: 'INVALID_START_TIME', reason: 'Invalid startTime format' };
+    }
+
+    const now = DateTime.now().setZone(timezone);
+    const bookingConfig = await availabilityRepository.getBranchBookingConfig(branchId);
+
+    if (source === 'PUBLIC' && bookingConfig && !bookingConfig.onlineBookingEnabled) {
+      return { valid: false, overrideAllowed: false, conflictType: 'SLOT_OUTSIDE_BRANCH_HOURS', reason: 'Online booking is disabled' };
+    }
+
+    if (bookingConfig) {
+      const earliestAllowed = now.plus({ minutes: bookingConfig.minimumAdvanceBookingMinutes });
+      const latestAllowed = now.plus({ days: bookingConfig.maximumAdvanceBookingDays });
+
+      if (requestedStart < earliestAllowed) {
+        return { valid: false, overrideAllowed: false, conflictType: 'MIN_ADVANCE_VIOLATION', reason: 'Slot is too soon to book' };
+      }
+      if (requestedStart > latestAllowed) {
+        return { valid: false, overrideAllowed: false, conflictType: 'MAX_ADVANCE_VIOLATION', reason: 'Slot is too far in the future to book' };
+      }
+    }
+
+    // ── Availability checks (soft — override may be allowed) ─────
+    const localDate = requestedStart.startOf('day');
+    const branchIntervals = await getBranchOperatingIntervals(branchId, localDate, timezone);
+    if (branchIntervals.length === 0) {
+      return { valid: false, overrideAllowed: false, conflictType: 'BRANCH_CLOSED', reason: 'Branch is closed on this date' };
+    }
+
+    const isFeasibleInBranch = isSlotFeasible(
+      requestedStart,
+      serviceConfig.effectiveDurationMinutes,
+      serviceConfig.bufferMinutes,
+      branchIntervals
+    );
+    if (!isFeasibleInBranch) {
+      return { valid: false, overrideAllowed: false, conflictType: 'SLOT_OUTSIDE_BRANCH_HOURS', reason: 'Slot falls outside branch operating hours' };
+    }
+
+    // Staff effective intervals
+    const staffIntervals = await getStaffEffectiveIntervals(staffId, branchId, localDate, timezone);
+    if (staffIntervals.length === 0) {
+      return { valid: false, overrideAllowed: true, conflictType: 'STAFF_NOT_WORKING', reason: 'Staff has no availability on this date' };
+    }
+
+    const isFeasibleForStaff = isSlotFeasible(
+      requestedStart,
+      serviceConfig.effectiveDurationMinutes,
+      serviceConfig.bufferMinutes,
+      staffIntervals
+    );
+    if (!isFeasibleForStaff) {
+      // Determine if blocked by breaks/time off or just schedule
+      const { getStaffBreakIntervals, getStaffTimeOffIntervals, getBranchOperatingIntervals: boi } = await import('./staff-availability.service');
+      const [breakIntervals, timeOffIntervals] = await Promise.all([
+        getStaffBreakIntervals(staffId, localDate, timezone),
+        getStaffTimeOffIntervals(staffId, localDate, timezone),
+      ]);
+
+      const reservedEnd = requestedStart.plus({ minutes: serviceConfig.effectiveDurationMinutes + serviceConfig.bufferMinutes });
+      const slotInterval = { start: requestedStart, end: reservedEnd };
+
+      const blockedByTimeOff = timeOffIntervals.some((iv) =>
+        iv.start < slotInterval.end && slotInterval.start < iv.end
+      );
+      if (blockedByTimeOff) {
+        return { valid: false, overrideAllowed: true, conflictType: 'STAFF_TIME_OFF', reason: 'Staff has time off during this slot' };
+      }
+
+      const blockedByBreak = breakIntervals.some((iv) =>
+        iv.start < slotInterval.end && slotInterval.start < iv.end
+      );
+      if (blockedByBreak) {
+        return { valid: false, overrideAllowed: true, conflictType: 'STAFF_ON_BREAK', reason: 'Staff is on break during this slot' };
+      }
+
+      return { valid: false, overrideAllowed: true, conflictType: 'STAFF_NOT_WORKING', reason: 'Staff is not working during this slot' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Returns eligible staff for a service at a branch.
+   * If staffId is provided, only returns that staff member if eligible.
+   */
+  async getEligibleStaff(businessId: string, branchId: string, serviceId: string, staffId?: string) {
+    const where: any = {
+      businessId,
+      branchId,
+      status: 'ACTIVE',
+      serviceQualifications: { some: { serviceId, isActive: true } },
+    };
+    if (staffId) where.id = staffId;
+
+    return prisma.staff.findMany({
+      where,
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: { id: 'asc' }, // Deterministic
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // PRIVATE HELPERS
+  // ─────────────────────────────────────────────────────────────
+
+  private async buildSlotsForStaff(
+    staff: { id: string; firstName: string; lastName: string },
+    branchId: string,
+    localDate: DateTime,
+    timezone: string,
+    durationMin: number,
+    bufferMin: number,
+    bookingConfig: any,
+    now: DateTime
+  ): Promise<AvailableSlotResponse[]> {
+    const effectiveIntervals = await getStaffEffectiveIntervals(
+      staff.id,
+      branchId,
+      localDate,
+      timezone
+    );
+    if (effectiveIntervals.length === 0) return [];
+
+    let candidates = generateSlots(effectiveIntervals, durationMin, bufferMin);
+
+    // Enforce minimum advance booking at the slot level
+    if (bookingConfig) {
+      const earliestAllowed = now.plus({ minutes: bookingConfig.minimumAdvanceBookingMinutes });
+      candidates = candidates.filter((slot) => slot.startTime >= earliestAllowed);
+    }
+
+    return candidates.map((slot) => ({
+      startTime: slot.startTime.toISO()!,
+      serviceEndTime: slot.serviceEndTime.toISO()!,
+      reservedEndTime: slot.reservedEndTime.toISO()!,
+      staff: { id: staff.id, firstName: staff.firstName, lastName: staff.lastName },
+    }));
   }
 
   private mapToConfig(assignment: any): ServiceBranchConfig {
     const service = assignment.service;
-    const effectiveDuration = assignment.durationMinutes ?? service.durationMinutes;
-    const effectivePrice = assignment.price ? Number(assignment.price) : Number(service.price);
-
     return {
       serviceId: assignment.serviceId,
       branchId: assignment.branchId,
       isActive: assignment.isActive,
-      effectiveDurationMinutes: effectiveDuration,
-      effectivePrice,
+      effectiveDurationMinutes: assignment.durationMinutes ?? service.durationMinutes,
+      effectivePrice: assignment.price ? Number(assignment.price) : Number(service.price),
       bufferMinutes: assignment.bufferMinutes,
       employeeAssignmentMode: service.employeeAssignmentMode,
       showPriceToCustomer: service.showPriceToCustomer,
