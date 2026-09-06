@@ -15,8 +15,11 @@ const api_error_1 = require("../utils/api-error");
 function requireBranchAccess(branchIdParam = 'branchId') {
     return (req, res, next) => __awaiter(this, void 0, void 0, function* () {
         try {
-            if (!req.auth || !req.businessMember) {
-                throw new api_error_1.ApiError(401, 'Authentication and business membership required', api_error_1.ErrorCodes.UNAUTHORIZED);
+            if (!req.auth) {
+                throw new api_error_1.ApiError(401, 'Authentication required', api_error_1.ErrorCodes.UNAUTHORIZED);
+            }
+            if (!req.businessMember) {
+                throw new api_error_1.ApiError(401, 'business membership required', api_error_1.ErrorCodes.UNAUTHORIZED);
             }
             const branchId = req.params[branchIdParam];
             if (!branchId) {
