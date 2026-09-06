@@ -93,6 +93,38 @@ export class ServiceController {
       next(error);
     }
   }
+
+  async updateServiceBranchConfig(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { serviceId, branchId } = req.params;
+      const { isActive, durationMinutes, price, bufferMinutes } = req.body;
+      const userId = req.auth!.userId;
+      const result = await serviceService.updateServiceBranchConfig(
+        serviceId,
+        branchId,
+        userId,
+        { isActive, durationMinutes, price, bufferMinutes }
+      );
+      res.status(200).json(successResponse('Service branch configuration updated successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getEffectiveServiceConfig(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { serviceId, branchId } = req.params;
+      const userId = req.auth!.userId;
+      const result = await serviceService.getEffectiveServiceConfig(serviceId, branchId);
+      if (!result) {
+        res.status(404).json(successResponse('Service not available at this branch', null));
+        return;
+      }
+      res.status(200).json(successResponse('Effective service configuration retrieved successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const serviceController = new ServiceController();

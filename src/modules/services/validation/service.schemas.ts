@@ -67,4 +67,10 @@ export const assignServiceBranchSchema = z.object({
 
 export const updateServiceBranchAssignmentSchema = z.object({
   isActive: z.boolean({ required_error: 'isActive is required' }),
+  durationMinutes: z.number().int().positive('Duration must be greater than 0').optional().nullable(),
+  price: z.union([z.string(), z.number()]).refine((val) => {
+    const num = Number(val);
+    return !isNaN(num) && num >= 0;
+  }, { message: 'Price must be greater than or equal to 0' }).optional().nullable(),
+  bufferMinutes: z.number().int().min(0, 'Buffer minutes must be >= 0').optional(),
 });

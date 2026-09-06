@@ -341,45 +341,95 @@ export class BranchService {
     });
 
     await prisma.$transaction(async (tx) => {
-      await tx.branchWeeklyHourInterval.deleteMany({
-        where: { weeklySchedule: { branchId } },
-      });
+  // 1. Delete existing intervals
+  await tx.branchWeeklyHourInterval.deleteMany({
+    where: {
+      weeklySchedule: {
+        branchId,
+      },
+    },
+  });
 
-      await tx.branchWeeklySchedule.deleteMany({
-        where: { branchId },
-      });
+  // 2. Delete existing schedules
+  await tx.branchWeeklySchedule.deleteMany({
+    where: {
+      branchId,
+    },
+  });
 
-      for (const day of input.days) {
-        const schedule = await tx.branchWeeklySchedule.create({
-          data: {
-            branchId,
-            dayOfWeek: day.dayOfWeek,
-            isClosed: day.isClosed,
-          },
-        });
+  // 3. Create all schedules at once
+  await tx.branchWeeklySchedule.createMany({
+    data: input.days.map((day) => ({
+      branchId,
+      dayOfWeek: day.dayOfWeek,
+      isClosed: day.isClosed,
+    })),
+  });
 
-        if (!day.isClosed && day.intervals.length > 0) {
-          await tx.branchWeeklyHourInterval.createMany({
-            data: day.intervals.map(i => ({
-              weeklyScheduleId: schedule.id,
-              startTime: new Date(`2000-01-01T${i.start}:00.000Z`),
-              endTime: new Date(`2000-01-01T${i.end}:00.000Z`),
-            })),
-          });
-        }
-      }
+  // 4. Fetch created schedules to get their IDs
+  const createdSchedules = await tx.branchWeeklySchedule.findMany({
+    where: { branchId },
+    select: {
+      id: true,
+      dayOfWeek: true,
+    },
+  });
 
-      await auditLogService.createAuditLog({
-        businessId: branch.businessId,
-        actorId: userId,
-        action: 'WEEKLY_HOURS_UPDATED',
-        entityType: 'BranchWeeklySchedule',
-        entityId: branchId,
-        oldValues: { schedules: oldSchedules },
-        newValues: { schedules: input.days },
-      }, tx);
+  const scheduleIdByDay = new Map(
+    createdSchedules.map((schedule) => [
+      schedule.dayOfWeek,
+      schedule.id,
+    ])
+  );
+
+  // 5. Prepare ALL intervals
+  const intervals = input.days.flatMap((day) => {
+    if (day.isClosed || day.intervals.length === 0) {
+      return [];
+    }
+
+    const weeklyScheduleId = scheduleIdByDay.get(day.dayOfWeek);
+
+    if (!weeklyScheduleId) {
+      throw new Error(
+        `Schedule not found for day: ${day.dayOfWeek}`
+      );
+    }
+
+    return day.intervals.map((interval) => ({
+      weeklyScheduleId,
+      startTime: new Date(
+        `2000-01-01T${interval.start}:00.000Z`
+      ),
+      endTime: new Date(
+        `2000-01-01T${interval.end}:00.000Z`
+      ),
+    }));
+  });
+
+  // 6. Insert all intervals in ONE query
+  if (intervals.length > 0) {
+    await tx.branchWeeklyHourInterval.createMany({
+      data: intervals,
     });
+  }
 
+  // 7. Audit log
+  await auditLogService.createAuditLog(
+    {
+      businessId: branch.businessId,
+      actorId: userId,
+      action: 'WEEKLY_HOURS_UPDATED',
+      entityType: 'BranchWeeklySchedule',
+      entityId: branchId,
+      oldValues: { schedules: oldSchedules },
+      newValues: { schedules: input.days },
+    },
+    tx
+  );
+});
+
+  
     return this.getWeeklyHours(branchId, userId);
   }
 

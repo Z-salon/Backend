@@ -105,13 +105,18 @@ router.get(
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}:
+ * /api/v1/{businessId}/branches/{branchId}:
  *   get:
  *     tags: [Branch Management]
  *     summary: Get branch details
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -128,21 +133,27 @@ router.get(
  *         description: Branch not found
  */
 router.get(
-  '/branches/:branchId',
+  '/:businessId/branches/:branchId',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   branchController.getBranch.bind(branchController)
 );
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}:
+ * /api/v1/{businessId}/branches/{branchId}:
  *   patch:
  *     tags: [Branch Management]
  *     summary: Update branch
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -181,8 +192,9 @@ router.get(
  *         description: Branch name already exists
  */
 router.patch(
-  '/branches/:branchId',
+  '/:businessId/branches/:branchId',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   bodyValidator(branchUpdateSchema),
   branchController.updateBranch.bind(branchController)
@@ -191,13 +203,18 @@ router.patch(
 // Weekly Working Hours
 /**
  * @openapi
- * /api/v1/branches/{branchId}/weekly-hours:
+ * /api/v1/{businessId}/branches/{branchId}/weekly-hours:
  *   get:
  *     tags: [Branch Working Hours]
  *     summary: Get weekly working hours for a branch
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -214,21 +231,27 @@ router.patch(
  *         description: Branch not found
  */
 router.get(
-  '/branches/:branchId/weekly-hours',
+  '/:businessId/branches/:branchId/weekly-hours',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   branchController.getWeeklyHours.bind(branchController)
 );
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}/weekly-hours:
+ * /api/v1/{businessId}/branches/{branchId}/weekly-hours:
  *   put:
  *     tags: [Branch Working Hours]
  *     summary: Create or replace weekly working hours for a branch
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -279,8 +302,9 @@ router.get(
  *         description: Branch not found
  */
 router.put(
-  '/branches/:branchId/weekly-hours',
+  '/:businessId/branches/:branchId/weekly-hours',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   bodyValidator(branchWeeklyHoursSchema),
   branchController.updateWeeklyHours.bind(branchController)
@@ -289,13 +313,18 @@ router.put(
 // Temporary Date Overrides
 /**
  * @openapi
- * /api/v1/branches/{branchId}/date-overrides:
+ * /api/v1/{businessId}/branches/{branchId}/date-overrides:
  *   post:
  *     tags: [Branch Date Overrides]
  *     summary: Create a temporary date override
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -340,8 +369,9 @@ router.put(
  *         description: Date override already exists
  */
 router.post(
-  '/branches/:branchId/date-overrides',
+  '/:businessId/branches/:branchId/date-overrides',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   bodyValidator(branchDateOverrideCreateSchema),
   branchController.createDateOverride.bind(branchController)
@@ -349,13 +379,18 @@ router.post(
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}/date-overrides:
+ * /api/v1/{businessId}/branches/{branchId}/date-overrides:
  *   get:
  *     tags: [Branch Date Overrides]
  *     summary: Get date overrides for a branch
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -386,21 +421,27 @@ router.post(
  *         description: Branch not found
  */
 router.get(
-  '/branches/:branchId/date-overrides',
+  '/:businessId/branches/:branchId/date-overrides',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   branchController.getDateOverrides.bind(branchController)
 );
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}/date-overrides/{overrideId}:
+ * /api/v1/{businessId}/branches/{branchId}/date-overrides/{overrideId}:
  *   patch:
  *     tags: [Branch Date Overrides]
  *     summary: Update a date override
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -449,8 +490,9 @@ router.get(
  *         description: Date override already exists for this date
  */
 router.patch(
-  '/branches/:branchId/date-overrides/:overrideId',
+  '/:businessId/branches/:branchId/date-overrides/:overrideId',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   bodyValidator(branchDateOverrideUpdateSchema),
   branchController.updateDateOverride.bind(branchController)
@@ -458,13 +500,18 @@ router.patch(
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}/date-overrides/{overrideId}:
+ * /api/v1/{businessId}/branches/{branchId}/date-overrides/{overrideId}:
  *   delete:
  *     tags: [Branch Date Overrides]
  *     summary: Delete a date override
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
  *       - in: path
  *         name: branchId
  *         required: true
@@ -486,8 +533,9 @@ router.patch(
  *         description: Date override not found
  */
 router.delete(
-  '/branches/:branchId/date-overrides/:overrideId',
+  '/:businessId/branches/:branchId/date-overrides/:overrideId',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   branchController.deleteDateOverride.bind(branchController)
 );
@@ -495,7 +543,7 @@ router.delete(
 // Branch Booking Configuration
 /**
  * @openapi
- * /api/v1/branches/{branchId}/booking-config:
+ * /api/v1/{businessId}/branches/{branchId}/booking-config:
  *   get:
  *     tags: [Branch Booking Configuration]
  *     summary: Get booking configuration for a branch
@@ -504,6 +552,11 @@ router.delete(
  *     parameters:
  *       - in: path
  *         name: branchId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: businessId
  *         required: true
  *         schema:
  *           type: string
@@ -518,15 +571,16 @@ router.delete(
  *         description: Branch not found
  */
 router.get(
-  '/branches/:branchId/booking-config',
+  '/:businessId/branches/:branchId/booking-config',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   branchController.getBookingConfig.bind(branchController)
 );
 
 /**
  * @openapi
- * /api/v1/branches/{branchId}/booking-config:
+ * /api/v1/{businessId}/branches/{branchId}/booking-config:
  *   patch:
  *     tags: [Branch Booking Configuration]
  *     summary: Update booking configuration for a branch
@@ -535,6 +589,11 @@ router.get(
  *     parameters:
  *       - in: path
  *         name: branchId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: businessId
  *         required: true
  *         schema:
  *           type: string
@@ -580,8 +639,9 @@ router.get(
  *         description: Branch not found
  */
 router.patch(
-  '/branches/:branchId/booking-config',
+  '/:businessId/branches/:branchId/booking-config',
   authenticate,
+  requireBusinessMembership,
   requireBranchAccess('branchId'),
   bodyValidator(branchBookingConfigUpdateSchema),
   branchController.updateBookingConfig.bind(branchController)

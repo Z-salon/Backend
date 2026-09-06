@@ -621,6 +621,395 @@ export class ServiceService {
 
     return updated;
   }
+
+  /**
+   * Resolves the effective service configuration for a specific branch.
+   * Branch-specific values override service defaults when not null.
+   */
+  async resolveServiceBranchConfig(
+    serviceId: string,
+    branchId: string
+  ): Promise<{
+    serviceId: string;
+    branchId: string;
+    isActive: boolean;
+    effectiveDurationMinutes: number;
+    effectivePrice: number;
+    bufferMinutes: number;
+    employeeAssignmentMode: string;
+    showPriceToCustomer: boolean;
+    depositPolicyType: string;
+    depositAmount: number | null;
+  } | null> {
+    const assignment = await prisma.serviceBranchAssignment.findUnique({
+      where: {
+        serviceId_branchId: { serviceId, branchId },
+      },
+      include: {
+        service: {
+          include: {
+            category: true,
+          },
+        },
+        branch: true,
+      },
+    });
+
+    if (!assignment || !assignment.isActive) {
+      return null;
+    }
+
+    if (!assignment.service || assignment.service.status !== 'ACTIVE') {
+      return null;
+    }
+
+    if (!assignment.branch || !assignment.branch.isActive) {
+      return null;
+    }
+
+    if (!assignment.service.category || assignment.service.category.status !== 'ACTIVE') {
+      return null;
+    }
+
+    // Check category is active at branch
+    const catBranch = await prisma.serviceCategoryBranchAssignment.findUnique({
+      where: {
+        categoryId_branchId: {
+          categoryId: assignment.service.categoryId,
+          branchId,
+        },
+      },
+    });
+
+    if (!catBranch || !catBranch.isActive) {
+      return null;
+    }
+
+    const effectiveDurationMinutes = assignment.durationMinutes ?? assignment.service.durationMinutes;
+    const effectivePrice = assignment.price ? Number(assignment.price) : Number(assignment.service.price);
+    const effectiveBufferMinutes = assignment.bufferMinutes;
+
+    return {
+      serviceId: assignment.serviceId,
+      branchId: assignment.branchId,
+      isActive: assignment.isActive,
+      effectiveDurationMinutes,
+      effectivePrice,
+      bufferMinutes: effectiveBufferMinutes,
+      employeeAssignmentMode: assignment.service.employeeAssignmentMode,
+      showPriceToCustomer: assignment.service.showPriceToCustomer,
+      depositPolicyType: assignment.service.depositPolicyType,
+      depositAmount: assignment.service.depositAmount ? Number(assignment.service.depositAmount) : null,
+    };
+  }
+
+  /**
+   * Gets the effective service configuration for display/booking.
+   * Includes all computed values.
+   */
+  async getEffectiveServiceConfig(serviceId: string, branchId: string): Promise<{
+    serviceId: string;
+    branchId: string;
+    name: string;
+    durationMinutes: number;
+    price: number;
+    bufferMinutes: number;
+    employeeAssignmentMode: string;
+    showPriceToCustomer: boolean;
+    depositPolicyType: string;
+    depositAmount: number | null;
+    isActive: boolean;
+  } | null> {
+    const config = await this.resolveServiceBranchConfig(serviceId, branchId);
+    if (!config) return null;
+
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { category: true },
+    });
+
+    if (!service) return null;
+
+    return {
+      serviceId: service.id,
+      branchId,
+      name: service.name,
+      durationMinutes: config.effectiveDurationMinutes,
+      price: config.effectivePrice,
+      bufferMinutes: config.bufferMinutes,
+      employeeAssignmentMode: config.employeeAssignmentMode,
+      showPriceToCustomer: config.showPriceToCustomer,
+      depositPolicyType: config.depositPolicyType,
+      depositAmount: config.depositAmount,
+      isActive: config.isActive,
+    };
+  }
+
+  /**
+   * Gets the booking block duration (service duration + buffer) for a service at a branch.
+   */
+  async getBookingBlockMinutes(serviceId: string, branchId: string): Promise<number | null> {
+    const config = await this.resolveServiceBranchConfig(serviceId, branchId);
+    if (!config) return null;
+    return config.effectiveDurationMinutes + config.bufferMinutes;
+  }
+
+  /**
+   * Validates that a service is bookable at a branch and returns the effective configuration.
+   */
+  async validateServiceAtBranch(
+    serviceId: string,
+    branchId: string
+  ): Promise<{
+    isValid: boolean;
+    errors: string[];
+    service?: any;
+    branch?: any;
+    business?: any;
+    effectiveConfig?: {
+      serviceId: string;
+      branchId: string;
+      isActive: boolean;
+      effectiveDurationMinutes: number;
+      effectivePrice: number;
+      bufferMinutes: number;
+      employeeAssignmentMode: string;
+      showPriceToCustomer: boolean;
+      depositPolicyType: string;
+      depositAmount: number | null;
+    };
+  }> {
+    const config = await this.resolveServiceBranchConfig(serviceId, branchId);
+
+    if (!config) {
+      return {
+        isValid: false,
+        errors: ['Service is not available at this branch'],
+      };
+    }
+
+    if (config.effectiveDurationMinutes <= 0) {
+      return {
+        isValid: false,
+        errors: ['Service duration must be positive'],
+      };
+    }
+
+    if (config.effectivePrice < 0) {
+      return {
+        isValid: false,
+        errors: ['Service price cannot be negative'],
+      };
+    }
+
+    if (config.bufferMinutes < 0) {
+      return {
+        isValid: false,
+        errors: ['Buffer minutes cannot be negative'],
+      };
+    }
+
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { category: true, branchAssignments: true },
+    });
+
+    const branch = await prisma.branch.findUnique({
+      where: { id: branchId },
+    });
+
+    const business = branch ? await prisma.business.findUnique({ where: { id: branch.businessId } }) : null;
+
+    return {
+      isValid: true,
+      errors: [],
+      service,
+      branch,
+      business,
+      effectiveConfig: config,
+    };
+  }
+
+  /**
+   * Updates a service branch assignment with branch-specific configuration.
+   * Supports partial updates of durationMinutes, price, bufferMinutes, and isActive.
+   */
+  async updateServiceBranchConfig(
+    serviceId: string,
+    branchId: string,
+    userId: string,
+    input: {
+      isActive?: boolean;
+      durationMinutes?: number | null;
+      price?: string | number | null;
+      bufferMinutes?: number;
+    }
+  ) {
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { category: true },
+    });
+
+    if (!service) {
+      throw new ApiError(404, 'Service not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyOwnerOrAdmin(service.businessId, userId);
+
+    const assignment = await prisma.serviceBranchAssignment.findUnique({
+      where: { serviceId_branchId: { serviceId, branchId } },
+    });
+
+    if (!assignment) {
+      throw new ApiError(404, 'Service branch assignment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    const branch = await prisma.branch.findUnique({
+      where: { id: branchId },
+    });
+
+    if (!branch) {
+      throw new ApiError(400, 'Branch not found', ErrorCodes.BRANCH_NOT_IN_BUSINESS);
+    }
+
+    if (branch.businessId !== service.businessId) {
+      throw new ApiError(400, 'Branch does not belong to the service business', ErrorCodes.BRANCH_NOT_IN_BUSINESS);
+    }
+
+    // Validate branch is active when activating
+    if (input.isActive === true) {
+      if (!branch.isActive) {
+        throw new ApiError(400, 'Branch is not active', ErrorCodes.BAD_REQUEST);
+      }
+
+      if (service.status !== 'ACTIVE') {
+        throw new ApiError(400, 'Service is INACTIVE and cannot be activated at a branch', ErrorCodes.VALIDATION_ERROR);
+      }
+
+      if (service.category.status !== 'ACTIVE') {
+        throw new ApiError(400, 'Service Category is INACTIVE', ErrorCodes.VALIDATION_ERROR);
+      }
+
+      const catBranch = await prisma.serviceCategoryBranchAssignment.findUnique({
+        where: { categoryId_branchId: { categoryId: service.categoryId, branchId } },
+      });
+
+      if (!catBranch || !catBranch.isActive) {
+        throw new ApiError(400, 'Category is not assigned and active at this branch', ErrorCodes.VALIDATION_ERROR);
+      }
+    }
+
+    // Validate numeric inputs
+    if (input.durationMinutes !== undefined && input.durationMinutes !== null && input.durationMinutes <= 0) {
+      throw new ApiError(400, 'Duration must be positive', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    if (input.price !== undefined && input.price !== null) {
+      const priceNum = Number(input.price);
+      if (isNaN(priceNum) || priceNum < 0) {
+        throw new ApiError(400, 'Price cannot be negative', ErrorCodes.VALIDATION_ERROR);
+      }
+    }
+
+    if (input.bufferMinutes !== undefined && input.bufferMinutes < 0) {
+      throw new ApiError(400, 'Buffer minutes cannot be negative', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const oldValues = {
+      isActive: assignment.isActive,
+      durationMinutes: assignment.durationMinutes,
+      price: assignment.price ? Number(assignment.price) : null,
+      bufferMinutes: assignment.bufferMinutes,
+    };
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updated = await tx.serviceBranchAssignment.update({
+        where: { id: assignment.id },
+        data: {
+          ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+          ...(input.durationMinutes !== undefined ? { durationMinutes: input.durationMinutes } : {}),
+          ...(input.price !== undefined ? { price: input.price ? new Prisma.Decimal(input.price.toString()) : null } : {}),
+          ...(input.bufferMinutes !== undefined ? { bufferMinutes: input.bufferMinutes } : {}),
+        },
+        include: {
+          branch: { select: { id: true, name: true, isActive: true } },
+        },
+      });
+
+      const newValues = {
+        isActive: updated.isActive,
+        durationMinutes: updated.durationMinutes,
+        price: updated.price ? Number(updated.price) : null,
+        bufferMinutes: updated.bufferMinutes,
+      };
+
+      await auditLogService.createAuditLog({
+        businessId: service.businessId,
+        actorId: userId,
+        action: 'SERVICE_BRANCH_CONFIG_UPDATED',
+        entityType: 'ServiceBranchAssignment',
+        entityId: updated.id,
+        oldValues,
+        newValues,
+      }, tx);
+
+      return updated;
+    });
+
+    return updated;
+  }
+
+  /**
+   * Gets all effectively available services at a branch with their effective config.
+   */
+  async getServicesWithEffectiveConfig(branchId: string, categoryId?: string) {
+    const services = await prisma.service.findMany({
+      where: {
+        status: 'ACTIVE',
+        ...(categoryId ? { categoryId } : {}),
+        category: {
+          status: 'ACTIVE',
+          branchAssignments: {
+            some: {
+              branchId,
+              isActive: true,
+              branch: { isActive: true },
+            },
+          },
+        },
+        branchAssignments: {
+          some: {
+            branchId,
+            isActive: true,
+          },
+        },
+      },
+      include: {
+        category: { select: { id: true, name: true, description: true } },
+        branchAssignments: {
+          where: { branchId },
+          include: { branch: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    const withConfig = await Promise.all(
+      services.map(async (service) => {
+        const config = await this.resolveServiceBranchConfig(service.id, branchId);
+        const branchAssignment = service.branchAssignments.find((ba) => ba.branchId === branchId);
+        return {
+          ...service,
+          effectiveDurationMinutes: config?.effectiveDurationMinutes ?? service.durationMinutes,
+          effectivePrice: config?.effectivePrice ?? Number(service.price),
+          bufferMinutes: config?.bufferMinutes ?? 0,
+          branchAssignment,
+        };
+      })
+    );
+
+    return withConfig;
+  }
 }
 
 export const serviceService = new ServiceService();
