@@ -5,9 +5,15 @@ import { ApiError, ErrorCodes } from '../utils/api-error';
 export function requireBranchAccess(branchIdParam: string = 'branchId') {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      if (!req.auth || !req.businessMember) {
-        throw new ApiError(401, 'Authentication and business membership required', ErrorCodes.UNAUTHORIZED);
+      if (!req.auth) {
+        throw new ApiError(401, 'Authentication required', ErrorCodes.UNAUTHORIZED);
       }
+
+      if (!req.businessMember) {
+        throw new ApiError(401, 'business membership required', ErrorCodes.UNAUTHORIZED);
+      }
+
+
 
       const branchId = req.params[branchIdParam];
       

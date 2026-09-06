@@ -13,16 +13,16 @@ import { config } from '../config/env';
 
 const router = Router();
 
-router.use(`${config.apiPrefix}/auth`, authRoutes);
-router.use(`${config.apiPrefix}`, invitationRoutes);
-router.use(`${config.apiPrefix}`, memberRoutes);
-router.use(`${config.apiPrefix}`, roleRoutes);
-router.use(`${config.apiPrefix}`, businessConfigurationRoutes);
-router.use(`${config.apiPrefix}`, branchRoutes);
-router.use(`${config.apiPrefix}`, serviceCategoryRoutes);
-router.use(`${config.apiPrefix}`, serviceRoutes);
-router.use(`${config.apiPrefix}`, staffRoutes);
-router.use(`${config.apiPrefix}`, customerRoutes);
+router.use(`/auth`, authRoutes);
+router.use(`/`, invitationRoutes);
+router.use(`/`, memberRoutes);
+router.use(`/`, roleRoutes);
+router.use(`/`, businessConfigurationRoutes);
+router.use(`/`, branchRoutes);
+router.use(`/`, serviceCategoryRoutes);
+router.use(`/`, serviceRoutes);
+router.use(`/`, staffRoutes);
+router.use(`/`, customerRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
