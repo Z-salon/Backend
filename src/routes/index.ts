@@ -10,21 +10,23 @@ import serviceRoutes from '../modules/services/routes/service.routes';
 import staffRoutes from '../modules/staff/routes/staff.routes';
 import customerRoutes from '../modules/customer/routes/customer.routes';
 import availabilityRoutes from '../modules/services/routes/availability.routes';
+import appointmentRoutes from '../modules/appointment/routes/appointment.routes';
 import { config } from '../config/env';
 
 const router = Router();
 
-router.use(`/auth`, authRoutes);
-router.use(`/`, invitationRoutes);
-router.use(`/`, memberRoutes);
-router.use(`/`, roleRoutes);
-router.use(`/`, businessConfigurationRoutes);
-router.use(`/`, branchRoutes);
-router.use(`/`, serviceCategoryRoutes);
-router.use(`/`, serviceRoutes);
+router.use(`${config.apiPrefix}/auth`, authRoutes);
+router.use(`${config.apiPrefix}`, invitationRoutes);
+router.use(`${config.apiPrefix}`, memberRoutes);
+router.use(`${config.apiPrefix}`, roleRoutes);
+router.use(`${config.apiPrefix}`, businessConfigurationRoutes);
+router.use(`${config.apiPrefix}`, branchRoutes);
+router.use(`${config.apiPrefix}`, serviceCategoryRoutes);
+router.use(`${config.apiPrefix}`, serviceRoutes);
 router.use(`${config.apiPrefix}`, staffRoutes);
 router.use(`${config.apiPrefix}`, customerRoutes);
 router.use(`${config.apiPrefix}`, availabilityRoutes);
+router.use(`${config.apiPrefix}`, appointmentRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
