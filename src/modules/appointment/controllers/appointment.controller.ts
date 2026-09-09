@@ -340,6 +340,29 @@ export class AppointmentController {
       next(error);
     }
   }
+
+  /**
+   * Mark appointment as NO_SHOW
+   */
+  async markNoShow(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { reason } = req.body;
+
+      const appointment = await appointmentService.markNoShow(
+        appointmentId,
+        businessId,
+        userId,
+        reason
+      );
+
+      res.json(successResponse('Appointment marked as no-show', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const appointmentController = new AppointmentController();

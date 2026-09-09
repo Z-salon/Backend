@@ -24,13 +24,20 @@ export class AppointmentExpirationService {
       const expirationDate = new Date();
       expirationDate.setMinutes(expirationDate.getMinutes() - config.pendingAppointmentExpirationMinutes);
 
-      // Find eligible PENDING appointments
+      // Find eligible PENDING appointments — skip any that have a pending payment receipt
+      // (admin still needs to review the receipt before we can expire the booking)
       const staleAppointments = await prisma.appointment.findMany({
         where: {
           branchId: config.branchId,
           status: AppointmentStatus.PENDING,
           createdAt: {
             lt: expirationDate
+          },
+          // Exclude appointments where a receipt is currently awaiting review
+          paymentReceipts: {
+            none: {
+              status: 'PENDING'
+            }
           }
         },
         select: {

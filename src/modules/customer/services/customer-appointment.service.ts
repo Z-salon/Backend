@@ -213,10 +213,14 @@ export class CustomerAppointmentService {
       throw new ApiError(400, `Cannot cancel within ${config.cancellationWindowMinutes} minutes of the appointment.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Determine refund amount
+    // Determine refund amount based on actual payments recorded
+    const paidPayments = await prisma.appointmentPayment.aggregate({
+      where: { appointmentId, status: 'PAID' },
+      _sum: { amount: true },
+    });
+    const amountPaid = paidPayments._sum.amount || new Prisma.Decimal(0);
+
     let refundableAmount = new Prisma.Decimal(0);
-    const amountPaid = appointment.depositAmount || new Prisma.Decimal(0);
-    
     if (amountPaid.gt(0)) {
       if (config.refundPolicyType === 'FULL_REFUND') {
         refundableAmount = amountPaid;
@@ -289,19 +293,57 @@ export class CustomerAppointmentService {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
     }
 
-    const history = await prisma.appointmentStatusHistory.findMany({
-      where: { appointmentId },
-      orderBy: { transitionTimestamp: 'asc' },
-      select: {
-        id: true,
-        statusFrom: true,
-        statusTo: true,
-        reason: true,
-        transitionTimestamp: true,
-      }
-    });
+    const [statusHistory, serviceUsages, payments, receipt] = await Promise.all([
+      prisma.appointmentStatusHistory.findMany({
+        where: { appointmentId },
+        orderBy: { transitionTimestamp: 'asc' },
+        select: {
+          id: true,
+          statusFrom: true,
+          statusTo: true,
+          reason: true,
+          transitionTimestamp: true,
+        },
+      }),
+      prisma.serviceUsage.findMany({
+        where: { appointmentId },
+        orderBy: { recordedAt: 'asc' },
+        select: {
+          id: true,
+          serviceName: true,
+          serviceDetails: true,
+          productsUsed: true,
+          notes: true,
+          recordedAt: true,
+        },
+      }),
+      prisma.appointmentPayment.findMany({
+        where: { appointmentId, status: 'PAID' },
+        orderBy: { paidAt: 'asc' },
+        select: {
+          id: true,
+          amount: true,
+          status: true,
+          paidAt: true,
+          paymentMethod: { select: { name: true, type: true } },
+        },
+      }),
+      prisma.paymentReceipt.findFirst({
+        where: { appointmentId },
+        orderBy: { submittedAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          submittedAmount: true,
+          receiptImageUrl: true,
+          submittedAt: true,
+          reviewedAt: true,
+          rejectionReason: true,
+        },
+      }),
+    ]);
 
-    return history;
+    return { statusHistory, serviceUsages, payments, receipt };
   }
 
   private mapToCustomerResponse(appointment: any): any {

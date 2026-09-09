@@ -1,5 +1,9 @@
 import { Router } from 'express';
 import { appointmentController } from '../controllers/appointment.controller';
+import { serviceUsageController } from '../controllers/service-usage.controller';
+import { paymentReceiptController } from '../../payment/controllers/payment-receipt.controller';
+import { paymentMethodController } from '../../payment/controllers/payment-method.controller';
+import { appointmentPaymentController } from '../../payment/controllers/appointment-payment.controller';
 import { authenticate } from '../../../middlewares/authenticate';
 import { requireBusinessMembership } from '../../../middlewares/require-business-membership';
 import { requirePermission } from '../../../middlewares/require-permission';
@@ -455,6 +459,137 @@ router.delete(
   '/appointments/:appointmentId/staff',
   authenticate,
   appointmentController.unassignStaff.bind(appointmentController)
+);
+
+// No-show
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/no-show',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  appointmentController.markNoShow.bind(appointmentController)
+);
+
+// Service usage
+router.post(
+  '/businesses/:businessId/appointments/:id/service-usages',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  serviceUsageController.addServiceUsage.bind(serviceUsageController)
+);
+
+router.get(
+  '/businesses/:businessId/appointments/:id/service-usages',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_VIEW'),
+  serviceUsageController.getServiceUsages.bind(serviceUsageController)
+);
+
+router.patch(
+  '/businesses/:businessId/service-usages/:usageId',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  serviceUsageController.updateServiceUsage.bind(serviceUsageController)
+);
+
+router.delete(
+  '/businesses/:businessId/service-usages/:usageId',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  serviceUsageController.deleteServiceUsage.bind(serviceUsageController)
+);
+
+// Business-side payment receipt routes
+router.get(
+  '/businesses/:businessId/receipts/pending',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  paymentReceiptController.listPendingReceipts.bind(paymentReceiptController)
+);
+
+router.get(
+  '/businesses/:businessId/appointments/:id/receipt',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_VIEW'),
+  paymentReceiptController.getReceiptForAppointment.bind(paymentReceiptController)
+);
+
+router.patch(
+  '/businesses/:businessId/appointments/:id/receipt/verify',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  paymentReceiptController.verifyReceipt.bind(paymentReceiptController)
+);
+
+// Public payment methods (authenticated customer can see)
+router.get(
+  '/businesses/:businessId/payment-methods/public',
+  authenticate,
+  paymentReceiptController.getPublicPaymentMethods.bind(paymentReceiptController)
+);
+
+// Payment method management (business admin)
+router.post(
+  '/businesses/:businessId/payment-methods',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('MANAGE_BUSINESS_SETTINGS'),
+  paymentMethodController.createPaymentMethod.bind(paymentMethodController)
+);
+
+router.get(
+  '/businesses/:businessId/payment-methods',
+  authenticate,
+  requireBusinessMembership,
+  paymentMethodController.getPaymentMethods.bind(paymentMethodController)
+);
+
+router.patch(
+  '/businesses/:businessId/payment-methods/:id',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('MANAGE_BUSINESS_SETTINGS'),
+  paymentMethodController.updatePaymentMethod.bind(paymentMethodController)
+);
+
+router.delete(
+  '/businesses/:businessId/payment-methods/:id',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('MANAGE_BUSINESS_SETTINGS'),
+  paymentMethodController.deletePaymentMethod.bind(paymentMethodController)
+);
+
+// Appointment payment management (actual money received)
+router.post(
+  '/businesses/:businessId/appointments/:id/payments',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  appointmentPaymentController.createPayment.bind(appointmentPaymentController)
+);
+
+router.get(
+  '/businesses/:businessId/appointments/:id/payments',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_VIEW'),
+  appointmentPaymentController.getPaymentsForAppointment.bind(appointmentPaymentController)
+);
+
+router.patch(
+  '/businesses/:businessId/payments/:paymentId/void',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  appointmentPaymentController.voidPayment.bind(appointmentPaymentController)
 );
 
 export default router;

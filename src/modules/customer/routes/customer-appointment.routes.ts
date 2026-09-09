@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { customerAppointmentController } from '../controllers/customer-appointment.controller';
+import { paymentReceiptController } from '../../payment/controllers/payment-receipt.controller';
 import { authenticate } from '../../../middlewares/authenticate';
 
 const router = Router();
@@ -53,5 +54,18 @@ router.post('/appointments/:appointmentId/cancel', authenticate, customerAppoint
  *     security: [{ bearerAuth: [] }]
  */
 router.get('/appointments/:appointmentId/history', authenticate, customerAppointmentController.getAppointmentHistory);
+
+// Payment receipt routes (customer-facing)
+router.post(
+  '/appointments/:id/receipt',
+  authenticate,
+  paymentReceiptController.submitReceipt.bind(paymentReceiptController)
+);
+
+router.get(
+  '/appointments/:id/receipt',
+  authenticate,
+  paymentReceiptController.getMyReceipt.bind(paymentReceiptController)
+);
 
 export default router;

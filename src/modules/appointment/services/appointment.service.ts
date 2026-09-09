@@ -615,13 +615,19 @@ export class AppointmentService {
     }
 
     const config = await prisma.branchBookingConfig.findUnique({ where: { branchId: appointment.branchId } });
-    
-    // Determine refund amount
+
+    // Calculate actual amount paid from payment records (not the deprecated depositAmount field)
+    const paidPayments = await prisma.appointmentPayment.aggregate({
+      where: { appointmentId, status: 'PAID' },
+      _sum: { amount: true },
+    });
+    const amountPaid = paidPayments._sum.amount || new Prisma.Decimal(0);
+
+    // Determine refund amount based on policy
     let refundableAmount = new Prisma.Decimal(0);
-    const amountPaid = appointment.depositAmount || new Prisma.Decimal(0);
-    
+
     // For business cancellation, they might ignore the deadline or apply the same refund rules.
-    // For now, apply the refund rule if there's a deposit.
+    // For now, apply the refund rule if there's a payment.
     if (amountPaid.gt(0) && config) {
       if (config.refundPolicyType === 'FULL_REFUND') {
         refundableAmount = amountPaid;
@@ -1084,6 +1090,78 @@ export class AppointmentService {
       createdAt: h.createdAt,
       actor: h.actor ? { id: h.actor.id, phone: h.actor.phone } : null,
     })); 
+  }
+
+  /**
+   * Mark an appointment as NO_SHOW.
+   * Only CONFIRMED appointments can become NO_SHOW (CHECKED_IN is not valid — customer arrived).
+   */
+  async markNoShow(
+    appointmentId: string,
+    businessId: string,
+    userId: string,
+    reason?: string
+  ) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    // Only CONFIRMED appointments can be marked as no-show
+    // CHECKED_IN means the customer physically arrived — nonsensical to mark no-show
+    if (!this.isValidTransition(appointment.status, AppointmentStatus.NO_SHOW)) {
+      throw new ApiError(
+        400,
+        `Cannot mark an appointment as NO_SHOW from ${appointment.status} status. ` +
+          `Only CONFIRMED appointments are eligible.`,
+        ErrorCodes.APPOINTMENT_INVALID_TRANSITION
+      );
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          status: AppointmentStatus.NO_SHOW,
+          noShowAt: new Date(),
+        },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        },
+      });
+
+      await tx.appointmentStatusHistory.create({
+        data: {
+          appointmentId,
+          statusFrom: appointment.status,
+          statusTo: AppointmentStatus.NO_SHOW,
+          actorId: userId,
+          actorType: AppointmentActorType.USER,
+          reason: reason || 'Customer did not show up',
+        },
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_NO_SHOW',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { status: appointment.status },
+          newValues: { status: AppointmentStatus.NO_SHOW, reason },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
   }
 }
 
