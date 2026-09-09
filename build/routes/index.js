@@ -16,6 +16,7 @@ const staff_routes_1 = __importDefault(require("../modules/staff/routes/staff.ro
 const customer_routes_1 = __importDefault(require("../modules/customer/routes/customer.routes"));
 const availability_routes_1 = __importDefault(require("../modules/services/routes/availability.routes"));
 const appointment_routes_1 = __importDefault(require("../modules/appointment/routes/appointment.routes"));
+const customer_appointment_routes_1 = __importDefault(require("../modules/customer/routes/customer-appointment.routes"));
 const env_1 = require("../config/env");
 const router = (0, express_1.Router)();
 router.use(`${env_1.config.apiPrefix}/auth`, auth_routes_1.default);
@@ -30,6 +31,7 @@ router.use(`${env_1.config.apiPrefix}`, staff_routes_1.default);
 router.use(`${env_1.config.apiPrefix}`, customer_routes_1.default);
 router.use(`${env_1.config.apiPrefix}`, availability_routes_1.default);
 router.use(`${env_1.config.apiPrefix}`, appointment_routes_1.default);
+router.use(`${env_1.config.apiPrefix}/customer`, customer_appointment_routes_1.default);
 router.get('/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });

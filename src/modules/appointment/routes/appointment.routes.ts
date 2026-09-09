@@ -266,6 +266,54 @@ router.get(
 
 /**
  * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/reschedule:
+ *   patch:
+ *     tags: [Appointments]
+ *     summary: Reschedule an appointment (business)
+ *     security: [{ bearerAuth: [] }]
+ */
+router.patch(
+  '/businesses/:businessId/appointments/:appointmentId/reschedule',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  appointmentController.rescheduleAppointment.bind(appointmentController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/service:
+ *   patch:
+ *     tags: [Appointments]
+ *     summary: Change appointment service (business)
+ *     security: [{ bearerAuth: [] }]
+ */
+router.patch(
+  '/businesses/:businessId/appointments/:appointmentId/service',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  appointmentController.editService.bind(appointmentController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/cancel:
+ *   post:
+ *     tags: [Appointments]
+ *     summary: Cancel an appointment (business)
+ *     security: [{ bearerAuth: [] }]
+ */
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/cancel',
+  authenticate,
+  requireBusinessMembership,
+  requirePermission('APPOINTMENT_UPDATE'),
+  appointmentController.cancelAppointment.bind(appointmentController)
+);
+
+/**
+ * @openapi
  * /api/v1/appointments/{appointmentId}:
  *   patch:
  *     tags: [Appointments]

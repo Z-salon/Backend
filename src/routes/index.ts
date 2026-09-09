@@ -11,6 +11,7 @@ import staffRoutes from '../modules/staff/routes/staff.routes';
 import customerRoutes from '../modules/customer/routes/customer.routes';
 import availabilityRoutes from '../modules/services/routes/availability.routes';
 import appointmentRoutes from '../modules/appointment/routes/appointment.routes';
+import customerAppointmentRoutes from '../modules/customer/routes/customer-appointment.routes';
 import { config } from '../config/env';
 
 const router = Router();
@@ -27,6 +28,7 @@ router.use(`${config.apiPrefix}`, staffRoutes);
 router.use(`${config.apiPrefix}`, customerRoutes);
 router.use(`${config.apiPrefix}`, availabilityRoutes);
 router.use(`${config.apiPrefix}`, appointmentRoutes);
+router.use(`${config.apiPrefix}/customer`, customerAppointmentRoutes);
 
 router.get('/health', (req, res) => {
   res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });

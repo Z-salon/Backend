@@ -8,6 +8,7 @@ import { swaggerSpec } from './config/swagger';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middlewares/error-handler';
 import { connectRedis } from './config/redis';
+import { registerScheduledJobs } from './config/scheduler';
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use(errorHandler);
 
 export async function startServer(): Promise<void> {
   await connectRedis();
+  registerScheduledJobs();
   
   return new Promise<void>((resolve, reject) => {
     const server = app.listen(config.port, '127.0.0.1', () => {

@@ -202,6 +202,76 @@ export class AppointmentController {
   }
 
   /**
+   * Reschedule appointment
+   */
+  async rescheduleAppointment(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { newStartTime, reason, staffId } = req.body;
+
+      if (!newStartTime) {
+        res.status(400).json({ success: false, message: 'newStartTime is required' });
+        return;
+      }
+
+      const appointment = await appointmentService.rescheduleBusinessAppointment(
+        businessId, userId, appointmentId, new Date(newStartTime), reason, staffId
+      );
+
+      res.json(successResponse('Appointment rescheduled successfully', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Change appointment service
+   */
+  async editService(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { serviceId } = req.body;
+
+      if (!serviceId) {
+        res.status(400).json({ success: false, message: 'serviceId is required' });
+        return;
+      }
+
+      const appointment = await appointmentService.editService(
+        businessId, userId, appointmentId, serviceId
+      );
+
+      res.json(successResponse('Appointment service updated successfully', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Cancel appointment
+   */
+  async cancelAppointment(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { reason } = req.body;
+
+      const appointment = await appointmentService.cancelAppointment(
+        businessId, userId, appointmentId, reason
+      );
+
+      res.json(successResponse('Appointment cancelled successfully', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Transition appointment status
    */
   async transitionStatus(req: Request, res: Response, next: NextFunction): Promise<void> {

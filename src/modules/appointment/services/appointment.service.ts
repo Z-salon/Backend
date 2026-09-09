@@ -334,7 +334,7 @@ export class AppointmentService {
       branchId: input.branchId,
       scheduledStart: { lt: input.scheduledEnd },
       scheduledEnd: { gt: input.scheduledStart },
-      status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+      status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
     };
 
     if (input.excludeAppointmentId) {
@@ -577,13 +577,14 @@ export class AppointmentService {
 
   private isValidTransition(from: AppointmentStatus, to: AppointmentStatus): boolean {
     const validTransitions: Record<AppointmentStatus, AppointmentStatus[]> = {
-      PENDING: [AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED],
+      PENDING: [AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED, AppointmentStatus.EXPIRED],
       CONFIRMED: [AppointmentStatus.CHECKED_IN, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW],
       CHECKED_IN: [AppointmentStatus.IN_PROGRESS, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW],
       IN_PROGRESS: [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED],
       COMPLETED: [],
       CANCELLED: [],
       NO_SHOW: [],
+      EXPIRED: [],
     };
 
     return validTransitions[from]?.includes(to) ?? false;
@@ -599,6 +600,241 @@ export class AppointmentService {
       case AppointmentStatus.NO_SHOW: return 'noShowAt';
       default: return null;
     }
+  }
+
+  async cancelAppointment(businessId: string, userId: string, appointmentId: string, reason?: string) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    if (['COMPLETED', 'CANCELLED', 'NO_SHOW', 'EXPIRED'].includes(appointment.status)) {
+      throw new ApiError(400, `Cannot cancel an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const config = await prisma.branchBookingConfig.findUnique({ where: { branchId: appointment.branchId } });
+    
+    // Determine refund amount
+    let refundableAmount = new Prisma.Decimal(0);
+    const amountPaid = appointment.depositAmount || new Prisma.Decimal(0);
+    
+    // For business cancellation, they might ignore the deadline or apply the same refund rules.
+    // For now, apply the refund rule if there's a deposit.
+    if (amountPaid.gt(0) && config) {
+      if (config.refundPolicyType === 'FULL_REFUND') {
+        refundableAmount = amountPaid;
+      } else if (config.refundPolicyType === 'PARTIAL_REFUND' && config.refundPercentage) {
+        refundableAmount = amountPaid.mul(config.refundPercentage).div(100);
+      }
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          status: AppointmentStatus.CANCELLED,
+          cancelledAt: new Date()
+        },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        }
+      });
+
+      await tx.appointmentStatusHistory.create({
+        data: {
+          appointmentId,
+          statusFrom: appointment.status,
+          statusTo: AppointmentStatus.CANCELLED,
+          actorId: userId,
+          actorType: AppointmentActorType.USER,
+          reason: reason || 'Business user cancelled',
+        }
+      });
+
+      if (amountPaid.gt(0)) {
+        await tx.cancellationRecord.create({
+          data: {
+            appointmentId,
+            amountPaid,
+            refundableAmount,
+            refundStatus: refundableAmount.gt(0) ? 'REFUND_PENDING' : 'NOT_APPLICABLE',
+            reason: reason || 'Business cancellation',
+          }
+        });
+      }
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_CANCELLED_BY_BUSINESS',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { status: appointment.status },
+          newValues: { status: AppointmentStatus.CANCELLED },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
+  }
+
+  async rescheduleBusinessAppointment(businessId: string, userId: string, appointmentId: string, newStartTime: Date, reason?: string, newStaffId?: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { staff: true, service: true }
+    });
+
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    if (['COMPLETED', 'CANCELLED', 'NO_SHOW', 'EXPIRED'].includes(appointment.status)) {
+      throw new ApiError(400, `Cannot reschedule an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const config = await prisma.branchBookingConfig.findUnique({ where: { branchId: appointment.branchId } });
+    const staffId = newStaffId || appointment.staff[0]?.staffId;
+    const newEndTime = new Date(newStartTime.getTime() + appointment.service.durationMinutes * 60000);
+
+    // Business users might bypass advance booking rules, but availability must be checked.
+    await this.checkConflicts(prisma, {
+      branchId: appointment.branchId,
+      staffId: staffId,
+      scheduledStart: newStartTime,
+      scheduledEnd: newEndTime,
+      serviceId: appointment.serviceId,
+      excludeAppointmentId: appointmentId
+    });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          scheduledStart: newStartTime,
+          scheduledEnd: newEndTime
+        },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        }
+      });
+
+      if (newStaffId && newStaffId !== appointment.staff[0]?.staffId) {
+        await tx.appointmentStaff.deleteMany({ where: { appointmentId } });
+        await tx.appointmentStaff.create({ data: { appointmentId, staffId: newStaffId } });
+      }
+
+      await tx.appointmentStatusHistory.create({
+        data: {
+          appointmentId,
+          statusFrom: appointment.status,
+          statusTo: appointment.status,
+          actorId: userId,
+          actorType: AppointmentActorType.USER,
+          reason: reason || 'Business user rescheduled',
+        }
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_RESCHEDULED_BY_BUSINESS',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { scheduledStart: appointment.scheduledStart, scheduledEnd: appointment.scheduledEnd },
+          newValues: { scheduledStart: newStartTime, scheduledEnd: newEndTime },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
+  }
+
+  async editService(businessId: string, userId: string, appointmentId: string, newServiceId: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { staff: true, service: true }
+    });
+
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    const serviceValidation = await availabilityService.validateServiceAtBranch(newServiceId, appointment.branchId);
+    if (!serviceValidation.isValid || !serviceValidation.effectiveConfig) {
+      throw new ApiError(400, serviceValidation.errors.join('; '), ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const effectiveConfig = serviceValidation.effectiveConfig;
+    const newEndTime = new Date(appointment.scheduledStart.getTime() + effectiveConfig.effectiveDurationMinutes * 60000);
+    const staffId = appointment.staff[0]?.staffId;
+
+    if (staffId) {
+      // Check staff qualification for new service
+      const qualification = await prisma.staffServiceQualification.findFirst({
+        where: { staffId: staffId, serviceId: newServiceId, isActive: true },
+      });
+      if (!qualification) {
+        throw new ApiError(400, 'Staff is not qualified for this service', ErrorCodes.VALIDATION_ERROR);
+      }
+    }
+
+    await this.checkConflicts(prisma, {
+      branchId: appointment.branchId,
+      staffId: staffId,
+      scheduledStart: appointment.scheduledStart,
+      scheduledEnd: newEndTime,
+      serviceId: newServiceId,
+      excludeAppointmentId: appointmentId
+    });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          serviceId: newServiceId,
+          scheduledEnd: newEndTime,
+          totalAmount: new Prisma.Decimal(effectiveConfig.effectivePrice.toString())
+        },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        }
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_SERVICE_CHANGED',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { serviceId: appointment.serviceId, totalAmount: appointment.totalAmount },
+          newValues: { serviceId: newServiceId, totalAmount: effectiveConfig.effectivePrice },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
   }
 
   async verifyAppointmentAccess(businessId: string, userId: string, appointment: any) {
@@ -760,7 +996,7 @@ export class AppointmentService {
         staff: { some: { staffId } },
         scheduledStart: { lt: appointment.scheduledEnd },
         scheduledEnd: { gt: appointment.scheduledStart },
-        status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+        status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
         id: { not: appointmentId },
       },
     });

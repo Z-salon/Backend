@@ -23,6 +23,7 @@ const swagger_1 = require("./config/swagger");
 const routes_1 = __importDefault(require("./routes"));
 const error_handler_1 = require("./middlewares/error-handler");
 const redis_1 = require("./config/redis");
+const scheduler_1 = require("./config/scheduler");
 const app = (0, express_1.default)();
 app.use((0, helmet_1.default)({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -47,6 +48,7 @@ app.use(error_handler_1.errorHandler);
 function startServer() {
     return __awaiter(this, void 0, void 0, function* () {
         yield (0, redis_1.connectRedis)();
+        (0, scheduler_1.registerScheduledJobs)();
         return new Promise((resolve, reject) => {
             const server = app.listen(env_1.config.port, '127.0.0.1', () => {
                 console.log(`🚀 Server running on port ${env_1.config.port} in ${env_1.config.nodeEnv} mode`);
