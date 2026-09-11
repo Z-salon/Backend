@@ -56,12 +56,51 @@ router.post('/appointments/:appointmentId/cancel', authenticate, customerAppoint
 router.get('/appointments/:appointmentId/history', authenticate, customerAppointmentController.getAppointmentHistory);
 
 // Payment receipt routes (customer-facing)
+/**
+ * @openapi
+ * /api/v1/customer/appointments/{id}/receipt:
+ *   post:
+ *     tags: [Customer Payment Receipts]
+ *     summary: Submit a payment receipt
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [paymentMethodId, submittedAmount, receiptImageUrl]
+ *             properties:
+ *               paymentMethodId: { type: string, format: uuid }
+ *               submittedAmount: { oneOf: [{ type: number }, { type: string }] }
+ *               receiptImageUrl: { type: string, format: uri }
+ *               customerNote: { type: string }
+ *     responses:
+ *       201: { description: Receipt submitted for verification }
+ *       400: { description: Invalid receipt data }
+ *       401: { description: Authentication required }
+ *       404: { description: Appointment not found }
+ */
 router.post(
   '/appointments/:id/receipt',
   authenticate,
   paymentReceiptController.submitReceipt.bind(paymentReceiptController)
 );
 
+/**
+ * @openapi
+ * /api/v1/customer/appointments/{id}/receipt:
+ *   get:
+ *     tags: [Customer Payment Receipts]
+ *     summary: Get the customer's payment receipt
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+ *     responses:
+ *       200: { description: Receipt retrieved successfully }
+ *       401: { description: Authentication required }
+ *       404: { description: Appointment or receipt not found }
+ */
 router.get(
   '/appointments/:id/receipt',
   authenticate,

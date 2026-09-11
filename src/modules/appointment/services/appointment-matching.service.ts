@@ -1,7 +1,6 @@
 import { prisma } from '../../../libs/prisma';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
 import { normalizePhone } from '../../../utils/phone';
-import { customerService } from '../../customer/services/customer.service';
 
 export class AppointmentMatchingService {
   /**
@@ -43,7 +42,7 @@ export class AppointmentMatchingService {
    */
   async findOrCreateCustomer(
     businessId: string,
-    actorId: string,
+    actorId: string | null,
     data: {
       firstName: string;
       lastName: string;
@@ -59,6 +58,9 @@ export class AppointmentMatchingService {
     });
 
     if (existingPhone) {
+      if (existingPhone.customer.status === 'ARCHIVED') {
+        throw new ApiError(400, 'Customer is archived', ErrorCodes.VALIDATION_ERROR);
+      }
       return { customerId: existingPhone.customer.id, isNew: false };
     }
 
@@ -70,7 +72,7 @@ export class AppointmentMatchingService {
           firstName: data.firstName,
           lastName: data.lastName,
           status: 'ACTIVE',
-          createdById: actorId,
+          createdById: actorId || undefined,
           phones: {
             create: {
               businessId,

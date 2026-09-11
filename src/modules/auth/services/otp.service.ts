@@ -102,20 +102,36 @@ export class OtpService {
   }
 
   async consumeVerificationToken(
-    verificationToken: string
+    verificationToken: string,
+    expectedPurpose?: 'LOGIN' | 'REGISTRATION' | 'PASSWORD_RESET' | 'PHONE_VERIFICATION' | 'INVITATION_ACCEPTANCE' | 'PHONE_CHANGE'
   ): Promise<{ phone: string; purpose: string }> {
     const tokenHash = hashVerificationToken(verificationToken);
 
     const challenge = await prisma.otpChallenge.findFirst({
       where: {
+        verificationTokenHash: tokenHash,
         status: 'VERIFIED',
-        consumedAt: { not: null },
       },
       orderBy: { verifiedAt: 'desc' },
     });
 
     if (!challenge) {
       throw new ApiError(400, 'Invalid or expired verification token', ErrorCodes.OTP_INVALID);
+    }
+
+    if (expectedPurpose && challenge.purpose !== expectedPurpose) {
+      throw new ApiError(400, 'Invalid or expired verification token', ErrorCodes.OTP_INVALID);
+    }
+
+    if (challenge.verifiedAt) {
+      const tokenExpiresAt = new Date(challenge.verifiedAt.getTime() + config.otp.expiresInMinutes * 60 * 1000);
+      if (tokenExpiresAt < new Date()) {
+        await prisma.otpChallenge.update({
+          where: { id: challenge.id },
+          data: { status: 'EXPIRED' },
+        });
+        throw new ApiError(400, 'OTP verification has expired', ErrorCodes.OTP_EXPIRED);
+      }
     }
 
     await prisma.otpChallenge.update({

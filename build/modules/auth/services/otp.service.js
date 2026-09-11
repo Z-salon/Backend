@@ -90,18 +90,31 @@ class OtpService {
             return verificationToken;
         });
     }
-    consumeVerificationToken(verificationToken) {
+    consumeVerificationToken(verificationToken, expectedPurpose) {
         return __awaiter(this, void 0, void 0, function* () {
             const tokenHash = (0, otp_1.hashVerificationToken)(verificationToken);
             const challenge = yield prisma_1.prisma.otpChallenge.findFirst({
                 where: {
+                    verificationTokenHash: tokenHash,
                     status: 'VERIFIED',
-                    consumedAt: { not: null },
                 },
                 orderBy: { verifiedAt: 'desc' },
             });
             if (!challenge) {
                 throw new api_error_1.ApiError(400, 'Invalid or expired verification token', api_error_1.ErrorCodes.OTP_INVALID);
+            }
+            if (expectedPurpose && challenge.purpose !== expectedPurpose) {
+                throw new api_error_1.ApiError(400, 'Invalid or expired verification token', api_error_1.ErrorCodes.OTP_INVALID);
+            }
+            if (challenge.verifiedAt) {
+                const tokenExpiresAt = new Date(challenge.verifiedAt.getTime() + env_1.config.otp.expiresInMinutes * 60 * 1000);
+                if (tokenExpiresAt < new Date()) {
+                    yield prisma_1.prisma.otpChallenge.update({
+                        where: { id: challenge.id },
+                        data: { status: 'EXPIRED' },
+                    });
+                    throw new api_error_1.ApiError(400, 'OTP verification has expired', api_error_1.ErrorCodes.OTP_EXPIRED);
+                }
             }
             yield prisma_1.prisma.otpChallenge.update({
                 where: { id: challenge.id },

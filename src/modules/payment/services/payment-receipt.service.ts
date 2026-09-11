@@ -145,9 +145,8 @@ export class PaymentReceiptService {
     const now = new Date();
 
     return prisma.$transaction(async (tx) => {
-      // 1. Update receipt
-      const updatedReceipt = await tx.paymentReceipt.update({
-        where: { id: receipt.id },
+      const claimed = await tx.paymentReceipt.updateMany({
+        where: { id: receipt.id, status: PaymentVerificationStatus.PENDING },
         data: {
           status:
             data.action === 'APPROVE'
@@ -162,44 +161,62 @@ export class PaymentReceiptService {
         },
       });
 
-      // 2. If APPROVED, confirm the appointment
+      if (claimed.count !== 1) {
+        throw ApiError.conflict('This receipt has already been reviewed');
+      }
+
+      const updatedReceipt = await tx.paymentReceipt.findUnique({ where: { id: receipt.id } });
+
       if (data.action === 'APPROVE') {
-        await tx.appointment.update({
-          where: { id: appointmentId },
-          data: {
-            status: AppointmentStatus.CONFIRMED,
-            confirmedAt: now,
-          },
-        });
-
-        // Create the actual AppointmentPayment
-        const finalAmount = data.verifiedAmount 
-          ? new Prisma.Decimal(data.verifiedAmount.toString()) 
-          : (receipt.submittedAmount || receipt.expectedAmount);
-
-        const payment = await tx.appointmentPayment.create({
-          data: {
+        const existingPayment = await tx.appointmentPayment.findFirst({
+          where: {
             appointmentId,
-            businessId,
-            branchId: appointment.branchId,
-            paymentMethodId: receipt.paymentMethodId,
-            amount: finalAmount,
-            status: 'PAID',
             reference: `Receipt: ${receipt.id}`,
-            recordedById: reviewerId,
-          }
-        });
-
-        await tx.appointmentStatusHistory.create({
-          data: {
-            appointmentId,
-            statusFrom: appointment.status,
-            statusTo: AppointmentStatus.CONFIRMED,
-            actorId: reviewerId,
-            actorType: AppointmentActorType.USER,
-            reason: 'Payment receipt approved — appointment confirmed',
+            status: 'PAID',
           },
         });
+
+        const shouldConfirm = appointment.status === AppointmentStatus.PENDING;
+
+        if (!existingPayment) {
+          const finalAmount = data.verifiedAmount
+            ? new Prisma.Decimal(data.verifiedAmount.toString())
+            : (receipt.submittedAmount || receipt.expectedAmount);
+
+          await tx.appointmentPayment.create({
+            data: {
+              appointmentId,
+              businessId,
+              branchId: appointment.branchId,
+              paymentMethodId: receipt.paymentMethodId,
+              amount: finalAmount,
+              status: 'PAID',
+              reference: `Receipt: ${receipt.id}`,
+              recordedById: reviewerId,
+            },
+          });
+        }
+
+        if (shouldConfirm) {
+          await tx.appointment.update({
+            where: { id: appointmentId },
+            data: {
+              status: AppointmentStatus.CONFIRMED,
+              confirmedAt: now,
+            },
+          });
+
+          await tx.appointmentStatusHistory.create({
+            data: {
+              appointmentId,
+              statusFrom: appointment.status,
+              statusTo: AppointmentStatus.CONFIRMED,
+              actorId: reviewerId,
+              actorType: AppointmentActorType.USER,
+              reason: 'Payment receipt approved — appointment confirmed',
+            },
+          });
+        }
 
         await auditLogService.createAuditLog(
           {
@@ -210,7 +227,7 @@ export class PaymentReceiptService {
             entityId: receipt.id,
             newValues: {
               appointmentId,
-              newStatus: AppointmentStatus.CONFIRMED,
+              newStatus: shouldConfirm ? AppointmentStatus.CONFIRMED : appointment.status,
               verifiedAmount: data.verifiedAmount,
             },
           },
@@ -233,6 +250,23 @@ export class PaymentReceiptService {
         );
       }
 
+      return updatedReceipt;
+    }).then(async (updatedReceipt) => {
+      if (data.action === 'APPROVE' && appointment.status === AppointmentStatus.PENDING) {
+        const customer = await prisma.customer.findUnique({
+          where: { id: appointment.customerId },
+          include: { phones: true },
+        });
+        const phone = customer?.phones.find((p) => p.isPrimary)?.phone || customer?.phones[0]?.phone;
+        if (phone) {
+          try {
+            const { sendAppointmentConfirmationSms } = await import('../../auth/sms/sms.service');
+            await sendAppointmentConfirmationSms(phone, appointment.scheduledStart, appointment.scheduledEnd);
+          } catch (err) {
+            console.error('Failed to send confirmation SMS after receipt approval', err);
+          }
+        }
+      }
       return updatedReceipt;
     });
   }

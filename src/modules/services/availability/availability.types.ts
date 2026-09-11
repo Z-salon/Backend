@@ -106,6 +106,7 @@ export interface ValidateSlotInput {
   staffId: string;
   startTime: string; // ISO string with offset
   source?: SlotSource;
+  excludeAppointmentId?: string;
 }
 
 export type ValidationReasonCode = 

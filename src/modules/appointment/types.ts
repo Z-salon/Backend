@@ -4,21 +4,16 @@ export interface AppointmentCreateInput {
   branchId: string;
   customerId: string;
   serviceId: string;
-  staffId?: string;
+  staffId: string;
   scheduledStart: Date;
-  scheduledEnd: Date;
   notes?: string;
   internalNotes?: string;
   bookingSource: BookingSource;
 }
 
 export interface AppointmentUpdateInput {
-  scheduledStart?: Date;
-  scheduledEnd?: Date;
-  staffId?: string | null;
-  notes?: string;
-  internalNotes?: string;
-  status?: AppointmentStatus;
+  notes?: string | null;
+  internalNotes?: string | null;
 }
 
 export interface AppointmentResponse {
@@ -105,18 +100,26 @@ export interface AppointmentListResponse {
   };
 }
 
+export interface AppointmentPaymentInput {
+  paymentMethodId: string;
+  amount: number;
+  reference?: string;
+  notes?: string;
+}
+
 export interface AppointmentCreateCoreInput {
   businessId: string;
   branchId: string;
   customerId: string;
   serviceId: string;
-  staffId?: string;
-  scheduledStart: Date;
-  scheduledEnd: Date;
+  staffId: string;
+  scheduledStart?: Date;
   notes?: string;
   internalNotes?: string;
   bookingSource: BookingSource;
   createdById?: string;
+  /** PHONE/STAFF deposit: record verified payment at creation time */
+  verifiedPayment?: AppointmentPaymentInput;
 }
 
 export interface AppointmentValidationResult {

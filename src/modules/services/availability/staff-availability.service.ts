@@ -188,21 +188,24 @@ export async function getStaffEffectiveIntervals(
   staffId: string,
   branchId: string,
   date: DateTime,
-  timezone: string
+  timezone: string,
+  excludeAppointmentId?: string
 ): Promise<TimeInterval[]> {
   const branchIntervals = await getBranchOperatingIntervals(branchId, date, timezone);
+  console.log(`Branch operating intervals for ${branchId} on ${date.toISODate()}:`, branchIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
   if (branchIntervals.length === 0) return [];
 
   const staffIntervals = await getStaffWorkingIntervals(staffId, branchId, date, timezone, branchIntervals);
+  console.log(`Staff working intervals for ${staffId} on ${date.toISODate()}:`, staffIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
   if (staffIntervals.length === 0) return [];
 
   const [breakIntervals, timeOffIntervals, appointmentIntervals] = await Promise.all([
     getStaffBreakIntervals(staffId, date, timezone),
     getStaffTimeOffIntervals(staffId, date, timezone),
-    availabilityRepository.getStaffBusyIntervalsFromAppointments(staffId, date, timezone),
+    availabilityRepository.getStaffBusyIntervalsFromAppointments(staffId, date, timezone, excludeAppointmentId),
   ]);
 
-  const allBlocking: TimeInterval[] = [...breakIntervals, ...timeOffIntervals];
+  const allBlocking: TimeInterval[] = [...breakIntervals, ...timeOffIntervals, ...appointmentIntervals];
 
   // Subtract blocking intervals from each working interval
   let available = staffIntervals;
@@ -213,6 +216,8 @@ export async function getStaffEffectiveIntervals(
     }
     available = next;
   }
+
+  console.log(`Final effective intervals for staff ${staffId} on ${date.toISODate()}:`, available.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
 
   return normalizeIntervals(available);
 }

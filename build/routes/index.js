@@ -17,21 +17,31 @@ const customer_routes_1 = __importDefault(require("../modules/customer/routes/cu
 const availability_routes_1 = __importDefault(require("../modules/services/routes/availability.routes"));
 const appointment_routes_1 = __importDefault(require("../modules/appointment/routes/appointment.routes"));
 const customer_appointment_routes_1 = __importDefault(require("../modules/customer/routes/customer-appointment.routes"));
-const env_1 = require("../config/env");
+const public_booking_routes_1 = __importDefault(require("../modules/appointment/routes/public-booking.routes"));
 const router = (0, express_1.Router)();
-router.use(`${env_1.config.apiPrefix}/auth`, auth_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, invitation_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, member_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, role_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, business_configuration_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, branch_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, service_category_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, service_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, staff_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, customer_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, availability_routes_1.default);
-router.use(`${env_1.config.apiPrefix}`, appointment_routes_1.default);
-router.use(`${env_1.config.apiPrefix}/customer`, customer_appointment_routes_1.default);
+router.use(`/auth`, auth_routes_1.default);
+router.use(`/`, invitation_routes_1.default);
+router.use(`/`, member_routes_1.default);
+router.use(`/`, role_routes_1.default);
+router.use(`/`, business_configuration_routes_1.default);
+router.use(`/`, branch_routes_1.default);
+router.use(`/`, service_category_routes_1.default);
+router.use(`/`, service_routes_1.default);
+router.use(`/`, staff_routes_1.default);
+router.use(`/`, customer_routes_1.default);
+router.use(`/`, availability_routes_1.default);
+router.use(`/`, appointment_routes_1.default);
+router.use(`/customer`, customer_appointment_routes_1.default);
+router.use(`/public`, public_booking_routes_1.default);
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Check API health
+ *     responses:
+ *       200: { description: API is healthy }
+ */
 router.get('/health', (req, res) => {
     res.json({ success: true, message: 'OK', timestamp: new Date().toISOString() });
 });

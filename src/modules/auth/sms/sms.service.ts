@@ -30,3 +30,17 @@ export async function sendInvitationLinkSms(phone: string, invitationUrl: string
   const provider = getSmsProvider();
   await provider.sendInvitationLink(phone, invitationUrl);
 }
+
+export async function sendAppointmentConfirmationSms(
+  phone: string,
+  scheduledStart: Date,
+  scheduledEnd: Date
+): Promise<void> {
+  const provider = getSmsProvider();
+  const start = scheduledStart.toISOString();
+  const end = scheduledEnd.toISOString();
+  await provider.sendMessage(
+    phone,
+    `Your appointment is confirmed from ${start} to ${end}.`
+  );
+}

@@ -2,6 +2,8 @@ import { prisma } from '../../../libs/prisma';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
 import { AppointmentStatus, AppointmentActorType, Prisma } from '@prisma/client';
 import { auditLogService } from '../../business/services/audit-log.service';
+import { availabilityService } from '../../services/availability/availability.service';
+import { appointmentService } from '../../appointment/services/appointment.service';
 
 export class CustomerAppointmentService {
   /**
@@ -107,11 +109,20 @@ export class CustomerAppointmentService {
       throw new ApiError(400, 'Rescheduling is disabled for this branch.', ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Determine new staff
     const staffId = newStaffId || appointment.staff[0]?.staffId;
-    const newEndTime = new Date(newStartTime.getTime() + appointment.service.durationMinutes * 60000);
+    if (!staffId) {
+      throw new ApiError(400, 'staffId is required for MVP', ErrorCodes.VALIDATION_ERROR);
+    }
 
-    // Validate availability and advance booking rules
+    const effectiveConfig = await availabilityService.resolveServiceBranchConfig(
+      appointment.serviceId,
+      appointment.branchId
+    );
+    if (!effectiveConfig) {
+      throw new ApiError(400, 'Service configuration not found', ErrorCodes.VALIDATION_ERROR);
+    }
+    const newEndTime = new Date(newStartTime.getTime() + effectiveConfig.effectiveDurationMinutes * 60000);
+
     const now = new Date();
     const minutesToAppointment = (newStartTime.getTime() - now.getTime()) / 60000;
     if (minutesToAppointment < config.minimumAdvanceBookingMinutes) {
@@ -122,22 +133,27 @@ export class CustomerAppointmentService {
       throw new ApiError(400, `Cannot book more than ${config.maximumAdvanceBookingDays} days in advance.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Check conflicts
-    const conflict = await prisma.appointment.findFirst({
-      where: {
-        branchId: appointment.branchId,
-        id: { not: appointmentId },
-        scheduledStart: { lt: newEndTime },
-        scheduledEnd: { gt: newStartTime },
-        status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
-        ...(staffId ? { staff: { some: { staffId } } } : {})
-      }
+    const slotValidation = await availabilityService.validateSlot({
+      businessId: appointment.businessId,
+      branchId: appointment.branchId,
+      serviceId: appointment.serviceId,
+      staffId,
+      startTime: newStartTime.toISOString(),
+      source: 'PUBLIC',
+      excludeAppointmentId: appointmentId,
     });
-
-    if (conflict) {
-      // NOTE: In a real system we would call availability service to find alternatives here.
-      throw new ApiError(409, 'Time slot or staff is unavailable at the requested time.', ErrorCodes.CONFLICT);
+    if (!slotValidation.valid) {
+      throw new ApiError(409, slotValidation.reason || 'Time slot or staff is unavailable at the requested time.', ErrorCodes.CONFLICT);
     }
+
+    await appointmentService.checkConflicts(prisma, {
+      branchId: appointment.branchId,
+      staffId,
+      scheduledStart: newStartTime,
+      scheduledEnd: newEndTime,
+      serviceId: appointment.serviceId,
+      excludeAppointmentId: appointmentId,
+    });
 
     const updated = await prisma.$transaction(async (tx) => {
       const updatedAppt = await tx.appointment.update({

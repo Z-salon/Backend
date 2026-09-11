@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { appointmentService } from '../services/appointment.service';
-import { appointmentMatchingService } from '../services/appointment-matching.service';
 import { successResponse } from '../../../utils/api-response';
 import { normalizePhone } from '../../../utils/phone';
+import { prisma } from '../../../libs/prisma';
 
 export class AppointmentController {
   /**
@@ -12,7 +12,7 @@ export class AppointmentController {
     try {
       const businessId = req.params.businessId;
       const userId = req.auth!.userId;
-      const { branchId, customerId, serviceId, staffId, scheduledStart, scheduledEnd, notes, internalNotes } = req.body;
+      const { branchId, customerId, serviceId, staffId, scheduledStart, notes, internalNotes } = req.body;
 
       const appointment = await appointmentService.createAppointment(
         {
@@ -22,7 +22,6 @@ export class AppointmentController {
           serviceId,
           staffId,
           scheduledStart: new Date(scheduledStart),
-          scheduledEnd: new Date(scheduledEnd),
           notes,
           internalNotes,
           bookingSource: 'ONLINE',
@@ -44,7 +43,7 @@ export class AppointmentController {
     try {
       const businessId = req.params.businessId;
       const userId = req.auth!.userId;
-      const { branchId, customerId, serviceId, staffId, scheduledStart, scheduledEnd, notes, internalNotes, bookingSource } = req.body;
+      const { branchId, customerId, serviceId, staffId, scheduledStart, notes, internalNotes, bookingSource, paymentMethodId, amount, paymentReference } = req.body;
 
       const appointment = await appointmentService.createAppointment(
         {
@@ -54,11 +53,13 @@ export class AppointmentController {
           serviceId,
           staffId,
           scheduledStart: new Date(scheduledStart),
-          scheduledEnd: new Date(scheduledEnd),
           notes,
           internalNotes,
           bookingSource: bookingSource === 'PHONE' ? 'PHONE' : 'STAFF',
           createdById: userId,
+          ...(paymentMethodId && amount
+            ? { verifiedPayment: { paymentMethodId, amount, reference: paymentReference } }
+            : {}),
         },
         userId
       );
@@ -76,7 +77,7 @@ export class AppointmentController {
     try {
       const businessId = req.params.businessId;
       const userId = req.auth!.userId;
-      const { branchId, customerId, serviceId, staffId, scheduledStart, scheduledEnd, notes, internalNotes } = req.body;
+      const { branchId, customerId, serviceId, staffId, scheduledStart, notes, internalNotes } = req.body;
 
       const appointment = await appointmentService.createAppointment(
         {
@@ -85,8 +86,7 @@ export class AppointmentController {
           customerId,
           serviceId,
           staffId,
-          scheduledStart: new Date(scheduledStart),
-          scheduledEnd: new Date(scheduledEnd),
+          scheduledStart: scheduledStart ? new Date(scheduledStart) : undefined,
           notes,
           internalNotes,
           bookingSource: 'WALK_IN',
@@ -311,10 +311,19 @@ export class AppointmentController {
    */
   async assignStaff(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const businessId = req.params.businessId;
       const appointmentId = req.params.appointmentId;
       const userId = req.auth!.userId;
       const { staffId } = req.body;
+
+      let businessId = req.params.businessId;
+      if (!businessId) {
+        const existing = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+        if (!existing) {
+          res.status(404).json({ success: false, message: 'Appointment not found' });
+          return;
+        }
+        businessId = existing.businessId;
+      }
 
       const appointment = await appointmentService.assignStaff(appointmentId, businessId, userId, staffId);
 
@@ -329,9 +338,18 @@ export class AppointmentController {
    */
   async unassignStaff(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const businessId = req.params.businessId;
       const appointmentId = req.params.appointmentId;
       const userId = req.auth!.userId;
+
+      let businessId = req.params.businessId;
+      if (!businessId) {
+        const existing = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+        if (!existing) {
+          res.status(404).json({ success: false, message: 'Appointment not found' });
+          return;
+        }
+        businessId = existing.businessId;
+      }
 
       const appointment = await appointmentService.unassignStaff(appointmentId, businessId, userId);
 

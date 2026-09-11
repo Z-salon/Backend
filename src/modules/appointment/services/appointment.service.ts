@@ -3,17 +3,15 @@ import { prisma } from '../../../libs/prisma';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
 import { auditLogService } from '../../business/services/audit-log.service';
 import { availabilityService } from '../../services/availability/availability.service';
-import { customerService } from '../../customer/services/customer.service';
-import { appointmentRepository } from '../repository/appointment.repository';
 import { appointmentMatchingService } from './appointment-matching.service';
 import {
   AppointmentCreateCoreInput,
   AppointmentValidationResult,
   AppointmentResponse,
-  AppointmentStatusHistoryResponse,
 } from '../types';
-import { AppointmentStatus, BookingSource, AppointmentActorType } from '@prisma/client';
+import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignmentMode } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { sendAppointmentConfirmationSms } from '../../auth/sms/sms.service';
 
 export class AppointmentService {
   /**
@@ -21,22 +19,34 @@ export class AppointmentService {
    * Handles all booking sources (ONLINE, STAFF, PHONE, WALK_IN).
    * Centralizes all validation, status determination, and transaction logic.
    */
-  async createAppointment(input: AppointmentCreateCoreInput, actorId: string): Promise<AppointmentResponse> {
+  async createAppointment(input: AppointmentCreateCoreInput, actorId: string | null): Promise<AppointmentResponse> {
     const {
       businessId,
       branchId,
       customerId,
       serviceId,
       staffId,
-      scheduledStart,
-      scheduledEnd,
       notes,
       internalNotes,
       bookingSource,
-      createdById,
     } = input;
 
-    // 1. Validate all entities and relationships
+    if (!staffId) {
+      throw new ApiError(400, 'staffId is required', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    let scheduledStart = input.scheduledStart;
+    if (bookingSource === BookingSource.WALK_IN && !scheduledStart) {
+      const branchRecord = await prisma.branch.findUnique({ where: { id: branchId } });
+      if (!branchRecord) {
+        throw new ApiError(400, 'Branch not found in this business', ErrorCodes.VALIDATION_ERROR);
+      }
+      scheduledStart = DateTime.now().setZone(branchRecord.timezone).toJSDate();
+    }
+    if (!scheduledStart) {
+      throw new ApiError(400, 'scheduledStart is required', ErrorCodes.VALIDATION_ERROR);
+    }
+
     const validation = await this.validateAppointmentCreation({
       businessId,
       branchId,
@@ -44,7 +54,6 @@ export class AppointmentService {
       serviceId,
       staffId,
       scheduledStart,
-      scheduledEnd,
       bookingSource: input.bookingSource,
     });
 
@@ -56,110 +65,163 @@ export class AppointmentService {
       throw new ApiError(400, 'Service configuration not found', ErrorCodes.VALIDATION_ERROR);
     }
 
-    const { business, branch, service, customer, staff, effectiveConfig } = validation;
+    const { customer, effectiveConfig } = validation;
+    const scheduledEnd = new Date(scheduledStart.getTime() + effectiveConfig.effectiveDurationMinutes * 60000);
 
-    // 2. Determine initial status based on booking source and config
-    let initialStatus: AppointmentStatus;
     const bookingConfig = await this.getBranchBookingConfig(branchId);
-
-    if (bookingSource === BookingSource.WALK_IN) {
-      initialStatus = AppointmentStatus.CHECKED_IN;
-    } else if (bookingConfig?.bookingApprovalRequired) {
-      initialStatus = AppointmentStatus.PENDING;
-    } else {
-      initialStatus = AppointmentStatus.CONFIRMED;
-    }
-
-    // 3. Calculate pricing (store historical price)
     const totalAmount = effectiveConfig.effectivePrice;
     const depositAmount = this.calculateDeposit(
       effectiveConfig.depositPolicyType,
       effectiveConfig.depositAmount,
       totalAmount
     );
+    const depositRequired = depositAmount !== null && depositAmount > 0;
 
-    // 4. Create appointment with all related records in transaction
+    if (
+      (bookingSource === BookingSource.PHONE || bookingSource === BookingSource.STAFF) &&
+      depositRequired &&
+      !input.verifiedPayment
+    ) {
+      throw new ApiError(
+        400,
+        'Deposit is required for this service. Verify payment first, then create a confirmed appointment with payment details. An appointment will not be created until payment is verified.',
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+
+    if (input.verifiedPayment) {
+      if (!actorId) {
+        throw new ApiError(400, 'A staff user is required to record a verified payment', ErrorCodes.VALIDATION_ERROR);
+      }
+      const paymentMethod = await prisma.paymentMethod.findUnique({
+        where: { id: input.verifiedPayment.paymentMethodId },
+      });
+      if (!paymentMethod || paymentMethod.businessId !== businessId || !paymentMethod.isActive) {
+        throw new ApiError(400, 'Invalid or inactive payment method', ErrorCodes.VALIDATION_ERROR);
+      }
+      if (input.verifiedPayment.amount <= 0) {
+        throw new ApiError(400, 'Payment amount must be greater than zero', ErrorCodes.VALIDATION_ERROR);
+      }
+    }
+
+    if (input.verifiedPayment) {
+      if (!actorId) {
+        throw new ApiError(400, 'Verified payment can only be recorded by staff', ErrorCodes.VALIDATION_ERROR);
+      }
+      const paymentMethod = await prisma.paymentMethod.findUnique({
+        where: { id: input.verifiedPayment.paymentMethodId },
+      });
+      if (!paymentMethod || paymentMethod.businessId !== businessId || !paymentMethod.isActive) {
+        throw new ApiError(400, 'Invalid or inactive payment method', ErrorCodes.VALIDATION_ERROR);
+      }
+    }
+
+    let initialStatus: AppointmentStatus;
+    if (bookingSource === BookingSource.WALK_IN) {
+      initialStatus = AppointmentStatus.CHECKED_IN;
+    } else if (bookingSource === BookingSource.ONLINE && (depositRequired || bookingConfig?.bookingApprovalRequired)) {
+      initialStatus = AppointmentStatus.PENDING;
+    } else {
+      initialStatus = AppointmentStatus.CONFIRMED;
+    }
+
+    const actorType = actorId ? AppointmentActorType.USER : AppointmentActorType.SYSTEM;
+
     const appointment = await prisma.$transaction(async (tx) => {
-      // Check for conflicting appointments
       await this.checkConflicts(tx, {
         branchId,
-        staffId: staff?.id,
+        staffId,
         scheduledStart,
         scheduledEnd,
-        serviceId: input.serviceId,
+        serviceId,
         excludeAppointmentId: undefined,
       });
 
-      // Create appointment
       const appointment = await tx.appointment.create({
         data: {
           businessId,
           branchId,
-          customerId: input.customerId,
-          serviceId: input.serviceId,
+          customerId,
+          serviceId,
           scheduledStart,
           scheduledEnd,
           status: initialStatus,
           totalAmount: new Prisma.Decimal(totalAmount.toString()),
           depositAmount: depositAmount ? new Prisma.Decimal(depositAmount.toString()) : null,
-          notes: input.notes,
-          internalNotes: input.internalNotes,
-          bookingSource: input.bookingSource,
+          notes,
+          internalNotes,
+          bookingSource,
           createdById: actorId,
           ...(initialStatus === AppointmentStatus.CONFIRMED ? { confirmedAt: new Date() } : {}),
           ...(initialStatus === AppointmentStatus.CHECKED_IN ? { checkedInAt: new Date() } : {}),
         },
       });
 
-      // Create status history
       await tx.appointmentStatusHistory.create({
         data: {
           appointmentId: appointment.id,
           statusFrom: null,
           statusTo: initialStatus,
           actorId: actorId,
-          actorType: AppointmentActorType.USER,
+          actorType,
           reason: `Appointment created via ${bookingSource}`,
         },
       });
 
-      // Assign staff if provided
-      if (input.staffId) {
-        await tx.appointmentStaff.create({
+      await tx.appointmentStaff.create({
+        data: {
+          appointmentId: appointment.id,
+          staffId,
+        },
+      });
+
+      if (input.verifiedPayment && (bookingSource === BookingSource.PHONE || bookingSource === BookingSource.STAFF)) {
+        await tx.appointmentPayment.create({
           data: {
             appointmentId: appointment.id,
-            staffId: input.staffId,
+            businessId,
+            branchId,
+            paymentMethodId: input.verifiedPayment.paymentMethodId,
+            amount: new Prisma.Decimal(input.verifiedPayment.amount.toString()),
+            status: 'PAID',
+            reference: input.verifiedPayment.reference,
+            notes: input.verifiedPayment.notes,
+            recordedById: actorId as string,
           },
         });
       }
 
-      // Create audit log
-      await auditLogService.createAuditLog(
-        {
-          businessId,
-          actorId: actorId,
-          action: 'APPOINTMENT_CREATED',
-          entityType: 'Appointment',
-          entityId: appointment.id,
-          newValues: {
-            branchId,
-            customerId,
-            serviceId,
-            staffId: input.staffId,
-            scheduledStart: scheduledStart.toISOString(),
-            scheduledEnd: scheduledEnd.toISOString(),
-            status: initialStatus,
-            bookingSource,
-            totalAmount,
+      if (actorId) {
+        await auditLogService.createAuditLog(
+          {
+            businessId,
+            actorId,
+            action: 'APPOINTMENT_CREATED',
+            entityType: 'Appointment',
+            entityId: appointment.id,
+            newValues: {
+              branchId,
+              customerId,
+              serviceId,
+              staffId,
+              scheduledStart: scheduledStart.toISOString(),
+              scheduledEnd: scheduledEnd.toISOString(),
+              status: initialStatus,
+              bookingSource,
+              totalAmount,
+            },
           },
-        },
-        tx
-      );
+          tx
+        );
+      }
 
       return appointment;
     });
 
-    // Return full appointment with relations
+    if (initialStatus === AppointmentStatus.CONFIRMED) {
+      await this.sendConfirmationSms(customer, appointment.scheduledStart, appointment.scheduledEnd);
+    }
+
     return this.getAppointmentById(appointment.id, businessId);
   }
 
@@ -171,12 +233,15 @@ export class AppointmentService {
     branchId: string;
     customerId: string;
     serviceId: string;
-    staffId?: string;
+    staffId: string;
     scheduledStart: Date;
-    scheduledEnd: Date;
     bookingSource: string;
   }): Promise<AppointmentValidationResult> {
-    const { businessId, branchId, customerId, serviceId, staffId, scheduledStart, scheduledEnd, bookingSource } = input;
+    const { businessId, branchId, customerId, serviceId, staffId, scheduledStart, bookingSource } = input;
+
+    if (!staffId) {
+      return { isValid: false, errors: ['staffId is required'] };
+    }
 
     // Validate business
     const business = await prisma.business.findUnique({ where: { id: businessId } });
@@ -194,7 +259,10 @@ export class AppointmentService {
     }
 
     // Validate customer
-    const customer = await prisma.customer.findUnique({ where: { id: customerId, businessId } });
+    const customer = await prisma.customer.findUnique({
+      where: { id: customerId, businessId },
+      include: { phones: true },
+    });
     if (!customer) {
       return { isValid: false, errors: ['Customer not found in this business'] };
     }
@@ -208,44 +276,52 @@ export class AppointmentService {
       return { isValid: false, errors: serviceValidation.errors };
     }
 
-    // Validate staff if provided
-    let staff = null;
-    if (input.staffId) {
-      const staffRecord = await prisma.staff.findUnique({ where: { id: input.staffId } });
-      if (!staffRecord || staffRecord.businessId !== businessId || staffRecord.branchId !== branchId) {
-        return { isValid: false, errors: ['Staff not found or not in this branch'] };
-      }
-      if (staffRecord.status !== 'ACTIVE') {
-        return { isValid: false, errors: ['Staff is not active'] };
-      }
-
-      // Check staff qualification
-      const qualification = await prisma.staffServiceQualification.findFirst({
-        where: { staffId: input.staffId, serviceId: input.serviceId, isActive: true },
-      });
-      if (!qualification) {
-        return { isValid: false, errors: ['Staff is not qualified for this service'] };
-      }
-      staff = staffRecord;
+    // Validate staff (required for MVP)
+    const staffRecord = await prisma.staff.findUnique({ where: { id: staffId } });
+    if (!staffRecord) {
+      return { isValid: false, errors: ['Staff not found'] };
+    }
+    if (staffRecord.businessId !== businessId) {
+      return { isValid: false, errors: ['Staff does not belong to this business'] };
+    }
+    if (staffRecord.branchId !== branchId) {
+      return { isValid: false, errors: ['Staff does not belong to this branch'] };
+    }
+    if (staffRecord.status !== 'ACTIVE') {
+      return { isValid: false, errors: ['Staff is not active'] };
     }
 
-    // Validate time slot
-    if (scheduledStart >= scheduledEnd) {
-      return { isValid: false, errors: ['scheduledStart must be before scheduledEnd'] };
+    const qualification = await prisma.staffServiceQualification.findFirst({
+      where: { staffId, serviceId, isActive: true },
+    });
+    if (!qualification) {
+      return { isValid: false, errors: ['Staff is not qualified for this service'] };
+    }
+    const staff = staffRecord;
+
+    if (bookingSource === 'ONLINE') {
+      const mode = serviceValidation.effectiveConfig?.employeeAssignmentMode;
+      if (mode && mode !== EmployeeAssignmentMode.CUSTOMER_CHOOSES) {
+        return {
+          isValid: false,
+          errors: [
+            `Online booking requires CUSTOMER_CHOOSES staff assignment. ${mode} is not supported in this MVP.`,
+          ],
+        };
+      }
     }
 
-    // Check if slot is valid for branch hours and staff availability
-    const slotValidation = await this.validateTimeSlot({
+    const slotValidation = await availabilityService.validateSlot({
+      businessId,
       branchId,
-      serviceId: input.serviceId,
-      staffId: input.staffId,
-      scheduledStart,
-      scheduledEnd,
-      bookingSource,
+      serviceId,
+      staffId,
+      startTime: scheduledStart.toISOString(),
+      source: bookingSource === 'ONLINE' ? 'PUBLIC' : 'INTERNAL',
     });
 
-    if (!slotValidation.isValid) {
-      return { isValid: false, errors: slotValidation.errors };
+    if (!slotValidation.valid) {
+      return { isValid: false, errors: [slotValidation.reason || 'Time slot is not available'] };
     }
 
     // Check online booking policy
@@ -264,20 +340,6 @@ export class AppointmentService {
       }
     }
 
-    // Validate staff availability if staff is specified
-    if (staffId) {
-      const staffValidation = await this.validateStaffAvailability({
-        staffId,
-        branchId,
-        scheduledStart,
-        scheduledEnd,
-        serviceId: input.serviceId,
-      });
-      if (!staffValidation.isValid) {
-        return { isValid: false, errors: staffValidation.errors };
-      }
-    }
-
     return {
       isValid: true,
       errors: [],
@@ -290,50 +352,59 @@ export class AppointmentService {
     };
   }
 
-  private async validateTimeSlot(input: {
-    branchId: string;
-    serviceId: string;
-    staffId?: string;
-    scheduledStart: Date;
-    scheduledEnd: Date;
-    bookingSource: string;
-  }) {
-    return { isValid: true, errors: [] };
-  }
 
-  private async validateStaffAvailability(input: {
-    staffId: string;
-    branchId: string;
-    scheduledStart: Date;
-    scheduledEnd: Date;
-    serviceId: string;
-  }) {
-    return { isValid: true, errors: [] };
-  }
 
   private async getBranchBookingConfig(branchId: string) {
     return prisma.branchBookingConfig.findUnique({ where: { branchId } });
   }
 
   private calculateDeposit(policyType: string, depositAmount: number | null, totalAmount: number): number | null {
-    if (policyType === 'NONE' || policyType === 'FULL') return null;
+    if (policyType === 'NONE') return null;
+    if (policyType === 'FULL') return totalAmount;
     if (policyType === 'FIXED') return depositAmount;
     if (policyType === 'PERCENTAGE') return Math.round(totalAmount * (depositAmount || 0) / 100);
     return null;
   }
 
+  private async sendConfirmationSms(customer: any, scheduledStart: Date, scheduledEnd: Date): Promise<void> {
+    try {
+      const phone = customer?.phones?.find((p: any) => p.isPrimary)?.phone || customer?.phones?.[0]?.phone;
+      if (!phone) return;
+      await sendAppointmentConfirmationSms(phone, scheduledStart, scheduledEnd);
+    } catch (err) {
+      console.error('Failed to send appointment confirmation SMS', err);
+    }
+  }
+
   async checkConflicts(tx: any, input: {
     branchId: string;
-    staffId?: string;
+    staffId: string;
     scheduledStart: Date;
     scheduledEnd: Date;
     serviceId: string;
     excludeAppointmentId?: string;
   }) {
+    if (!input.staffId) {
+      throw new ApiError(400, 'staffId is required', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    // Resolve buffer for the new appointment
+    const newServiceConfig = await availabilityService.resolveServiceBranchConfig(input.serviceId, input.branchId);
+    if (!newServiceConfig) {
+       throw new ApiError(400, 'Service configuration not found', ErrorCodes.VALIDATION_ERROR);
+    }
+    const newBuffer = newServiceConfig.bufferMinutes || 0;
+    const newReservedEnd = new Date(input.scheduledEnd.getTime() + newBuffer * 60000);
+
+    const dayStart = new Date(input.scheduledStart);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
     const where: any = {
-      branchId: input.branchId,
-      scheduledStart: { lt: input.scheduledEnd },
-      scheduledEnd: { gt: input.scheduledStart },
+      staff: { some: { staffId: input.staffId } },
+      scheduledStart: { lt: dayEnd },
+      scheduledEnd: { gt: dayStart },
       status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
     };
 
@@ -341,13 +412,27 @@ export class AppointmentService {
       where.id = { not: input.excludeAppointmentId };
     }
 
-    if (input.staffId) {
-      where.staff = { some: { staffId: input.staffId } };
-    }
+    const appointments = await tx.appointment.findMany({
+      where,
+      include: {
+        service: {
+          include: { branchAssignments: true }
+        }
+      }
+    });
 
-    const conflict = await tx.appointment.findFirst({ where });
-    if (conflict) {
-      throw new ApiError(409, 'Time slot conflicts with existing appointment', ErrorCodes.CONFLICT);
+    for (const appt of appointments) {
+      let existingBuffer = 0;
+      const branchAssignment = appt.service.branchAssignments.find((ba: any) => ba.branchId === appt.branchId);
+      if (branchAssignment && branchAssignment.bufferMinutes !== undefined) {
+        existingBuffer = branchAssignment.bufferMinutes;
+      }
+      const existingReservedEnd = new Date(appt.scheduledEnd.getTime() + existingBuffer * 60000);
+
+      // Check for overlap: newStart < existingReservedEnd AND existingStart < newReservedEnd
+      if (input.scheduledStart < existingReservedEnd && appt.scheduledStart < newReservedEnd) {
+        throw new ApiError(409, 'Time slot conflicts with existing appointment', ErrorCodes.CONFLICT);
+      }
     }
   }
 
@@ -437,11 +522,17 @@ export class AppointmentService {
 
     await this.verifyAppointmentAccess(businessId, userId, appointment);
 
+    const disallowed = ['scheduledStart', 'scheduledEnd', 'staffId', 'status', 'serviceId', 'customerId', 'branchId'];
+    const attempted = disallowed.filter((field) => data[field] !== undefined);
+    if (attempted.length > 0) {
+      throw new ApiError(
+        400,
+        `Cannot update ${attempted.join(', ')} via generic PATCH. Use reschedule, service change, staff assignment, or status transition endpoints.`,
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+
     const oldValues = {
-      scheduledStart: appointment.scheduledStart,
-      scheduledEnd: appointment.scheduledEnd,
-      status: appointment.status,
-      staffIds: appointment.staff.map(s => s.staffId),
       notes: appointment.notes,
       internalNotes: appointment.internalNotes,
     };
@@ -450,11 +541,8 @@ export class AppointmentService {
       const updated = await tx.appointment.update({
         where: { id: appointmentId },
         data: {
-          ...(data.scheduledStart ? { scheduledStart: new Date(data.scheduledStart) } : {}),
-          ...(data.scheduledEnd ? { scheduledEnd: new Date(data.scheduledEnd) } : {}),
           ...(data.notes !== undefined ? { notes: data.notes } : {}),
           ...(data.internalNotes !== undefined ? { internalNotes: data.internalNotes } : {}),
-          ...(data.status ? { status: data.status } : {}),
         },
         include: {
           customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
@@ -462,37 +550,6 @@ export class AppointmentService {
           staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
         },
       });
-
-      // Handle staff reassignment
-      if (data.staffId !== undefined) {
-        await tx.appointmentStaff.deleteMany({ where: { appointmentId } });
-        if (data.staffId) {
-          await tx.appointmentStaff.create({ data: { appointmentId, staffId: data.staffId } });
-        }
-      }
-
-      // Create status history if status changed
-      if (data.status && data.status !== appointment.status) {
-        await tx.appointmentStatusHistory.create({
-          data: {
-            appointmentId,
-            statusFrom: appointment.status,
-            statusTo: data.status,
-            actorId: userId,
-            actorType: AppointmentActorType.USER,
-            reason: data.reason || 'Status updated by user',
-          },
-        });
-
-        // Update timestamp fields
-        const timestampField = this.getTimestampField(data.status);
-        if (timestampField) {
-          await tx.appointment.update({
-            where: { id: appointmentId },
-            data: { [timestampField]: new Date() },
-          });
-        }
-      }
 
       await auditLogService.createAuditLog(
         {
@@ -503,9 +560,8 @@ export class AppointmentService {
           entityId: appointmentId,
           oldValues,
           newValues: {
-            scheduledStart: data.scheduledStart || appointment.scheduledStart,
-            scheduledEnd: data.scheduledEnd || appointment.scheduledEnd,
-            status: data.status || appointment.status,
+            notes: data.notes !== undefined ? data.notes : appointment.notes,
+            internalNotes: data.internalNotes !== undefined ? data.internalNotes : appointment.internalNotes,
           },
         },
         tx
@@ -707,11 +763,30 @@ export class AppointmentService {
       throw new ApiError(400, `Cannot reschedule an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    const config = await prisma.branchBookingConfig.findUnique({ where: { branchId: appointment.branchId } });
     const staffId = newStaffId || appointment.staff[0]?.staffId;
-    const newEndTime = new Date(newStartTime.getTime() + appointment.service.durationMinutes * 60000);
+    if (!staffId) {
+      throw new ApiError(400, 'staffId is required for MVP', ErrorCodes.VALIDATION_ERROR);
+    }
 
-    // Business users might bypass advance booking rules, but availability must be checked.
+    const effectiveConfig = await availabilityService.resolveServiceBranchConfig(appointment.serviceId, appointment.branchId);
+    if (!effectiveConfig) {
+      throw new ApiError(400, 'Service configuration not found', ErrorCodes.VALIDATION_ERROR);
+    }
+    const newEndTime = new Date(newStartTime.getTime() + effectiveConfig.effectiveDurationMinutes * 60000);
+
+    const slotValidation = await availabilityService.validateSlot({
+      businessId,
+      branchId: appointment.branchId,
+      serviceId: appointment.serviceId,
+      staffId,
+      startTime: newStartTime.toISOString(),
+      source: 'INTERNAL',
+      excludeAppointmentId: appointmentId,
+    });
+    if (!slotValidation.valid) {
+      throw new ApiError(409, slotValidation.reason || 'Time slot conflicts with existing availability', ErrorCodes.CONFLICT);
+    }
+
     await this.checkConflicts(prisma, {
       branchId: appointment.branchId,
       staffId: staffId,
@@ -789,15 +864,28 @@ export class AppointmentService {
     const effectiveConfig = serviceValidation.effectiveConfig;
     const newEndTime = new Date(appointment.scheduledStart.getTime() + effectiveConfig.effectiveDurationMinutes * 60000);
     const staffId = appointment.staff[0]?.staffId;
+    if (!staffId) {
+      throw new ApiError(400, 'staffId is required for MVP', ErrorCodes.VALIDATION_ERROR);
+    }
 
-    if (staffId) {
-      // Check staff qualification for new service
-      const qualification = await prisma.staffServiceQualification.findFirst({
-        where: { staffId: staffId, serviceId: newServiceId, isActive: true },
-      });
-      if (!qualification) {
-        throw new ApiError(400, 'Staff is not qualified for this service', ErrorCodes.VALIDATION_ERROR);
-      }
+    const qualification = await prisma.staffServiceQualification.findFirst({
+      where: { staffId, serviceId: newServiceId, isActive: true },
+    });
+    if (!qualification) {
+      throw new ApiError(400, 'Staff is not qualified for this service', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const slotValidation = await availabilityService.validateSlot({
+      businessId,
+      branchId: appointment.branchId,
+      serviceId: newServiceId,
+      staffId,
+      startTime: appointment.scheduledStart.toISOString(),
+      source: 'INTERNAL',
+      excludeAppointmentId: appointmentId,
+    });
+    if (!slotValidation.valid) {
+      throw new ApiError(409, slotValidation.reason || 'Current appointment time is not available for the new service', ErrorCodes.CONFLICT);
     }
 
     await this.checkConflicts(prisma, {
@@ -951,7 +1039,7 @@ export class AppointmentService {
    */
   async findOrCreateCustomer(
     businessId: string,
-    actorId: string,
+    actorId: string | null,
     data: { firstName: string; lastName: string; phone: string }
   ): Promise<{ customerId: string; isNew: boolean }> {
     return appointmentMatchingService.findOrCreateCustomer(businessId, actorId, data);
@@ -973,6 +1061,10 @@ export class AppointmentService {
     userId: string,
     staffId: string
   ) {
+    if (!staffId) {
+      throw new ApiError(400, 'staffId is required', ErrorCodes.VALIDATION_ERROR);
+    }
+
     const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
     if (!appointment || appointment.businessId !== businessId) {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
@@ -981,14 +1073,19 @@ export class AppointmentService {
     await this.verifyAppointmentAccess(businessId, userId, appointment);
 
     const staff = await prisma.staff.findUnique({ where: { id: staffId } });
-    if (!staff || staff.businessId !== businessId || staff.branchId !== appointment.branchId) {
-      throw new ApiError(400, 'Staff not found or not in this branch', ErrorCodes.BRANCH_NOT_IN_BUSINESS);
+    if (!staff) {
+      throw new ApiError(400, 'Staff not found', ErrorCodes.VALIDATION_ERROR);
+    }
+    if (staff.businessId !== businessId) {
+      throw new ApiError(400, 'Staff does not belong to this business', ErrorCodes.BRANCH_NOT_IN_BUSINESS);
+    }
+    if (staff.branchId !== appointment.branchId) {
+      throw new ApiError(400, 'Staff does not belong to this branch', ErrorCodes.BRANCH_NOT_IN_BUSINESS);
     }
     if (staff.status !== 'ACTIVE') {
       throw new ApiError(400, 'Staff is not active', ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Check qualification
     const qualification = await prisma.staffServiceQualification.findFirst({
       where: { staffId, serviceId: appointment.serviceId, isActive: true },
     });
@@ -996,24 +1093,31 @@ export class AppointmentService {
       throw new ApiError(400, 'Staff is not qualified for this service', ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Check staff availability at appointment time
-    const conflict = await prisma.appointment.findFirst({
-      where: {
-        staff: { some: { staffId } },
-        scheduledStart: { lt: appointment.scheduledEnd },
-        scheduledEnd: { gt: appointment.scheduledStart },
-        status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
-        id: { not: appointmentId },
-      },
+    const slotValidation = await availabilityService.validateSlot({
+      businessId,
+      branchId: appointment.branchId,
+      serviceId: appointment.serviceId,
+      staffId,
+      startTime: appointment.scheduledStart.toISOString(),
+      source: 'INTERNAL',
+      excludeAppointmentId: appointmentId,
     });
-    if (conflict) {
-      throw new ApiError(409, 'Staff has a conflicting appointment at this time', ErrorCodes.CONFLICT);
+    if (!slotValidation.valid) {
+      throw new ApiError(409, slotValidation.reason || 'Staff is not available for this appointment', ErrorCodes.CONFLICT);
     }
 
-    await prisma.appointmentStaff.upsert({
-      where: { appointmentId_staffId: { appointmentId, staffId } },
-      create: { appointmentId, staffId },
-      update: {},
+    await this.checkConflicts(prisma, {
+      branchId: appointment.branchId,
+      staffId,
+      scheduledStart: appointment.scheduledStart,
+      scheduledEnd: appointment.scheduledEnd,
+      serviceId: appointment.serviceId,
+      excludeAppointmentId: appointmentId,
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.appointmentStaff.deleteMany({ where: { appointmentId } });
+      await tx.appointmentStaff.create({ data: { appointmentId, staffId } });
     });
 
     await auditLogService.createAuditLog({
@@ -1043,7 +1147,11 @@ export class AppointmentService {
 
     await this.verifyAppointmentAccess(businessId, userId, appointment);
 
-    await prisma.appointmentStaff.deleteMany({ where: { appointmentId } });
+    throw new ApiError(
+      400,
+      'Appointments must have exactly one staff member. Use staff assignment to reassign instead of unassigning.',
+      ErrorCodes.VALIDATION_ERROR
+    );
 
     await auditLogService.createAuditLog({
       businessId,

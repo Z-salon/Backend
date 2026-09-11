@@ -235,6 +235,7 @@ export class AvailabilityService {
 
     // ── 4. Enforce booking window policies ───────────────────────
     const now = DateTime.now().setZone(timezone);
+    console.log(`Now in branch timezone: ${now.toISO()} | Requested date: ${localDate.toISODate()}`);
     const dayStart = localDate.startOf('day');
     const dayEnd = localDate.endOf('day');
 
@@ -252,66 +253,29 @@ export class AvailabilityService {
 
     const { effectiveDurationMinutes, bufferMinutes, employeeAssignmentMode } = serviceConfig;
 
-    // ── 5. Handle CUSTOMER_CHOOSES mode FIRST (before staff resolution) ──
-    if (employeeAssignmentMode === 'CUSTOMER_CHOOSES') {
-      if (!staffId) {
-        throw ApiError.badRequest('staffId is required for CUSTOMER_CHOOSES services');
-      }
-      // Verify the requested staff is active, belongs to this branch, and is qualified
-      const requestedStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
-      if (requestedStaff.length === 0) {
-        throw ApiError.badRequest('Staff not eligible for this service at this branch');
-      }
-
-      const slots = await this.buildSlotsForStaff(
-        requestedStaff[0],
-        branchId,
-        localDate,
-        timezone,
-        effectiveDurationMinutes,
-        bufferMinutes,
-        bookingConfig,
-        now
-      );
-
-      return { date, branchId, serviceId, timezone, availableSlots: slots };
+    if (!staffId) {
+      throw ApiError.badRequest('staffId is required for MVP');
     }
 
-    // ── 6. Resolve Eligible Staff (SALON_ASSIGNS / ANY_AVAILABLE) ─
-    const eligibleStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
-    if (eligibleStaff.length === 0) {
-      return { date, branchId, serviceId, timezone, availableSlots: [] };
+    const requestedStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
+    if (requestedStaff.length === 0) {
+      throw ApiError.badRequest('Staff not eligible for this service at this branch');
     }
 
-    // ── 7. SALON_ASSIGNS / ANY_AVAILABLE: Collect slots from all eligible staff ──
-    // Build a map of startTime → first available staff (deterministic by staff ID order)
-    const slotMap = new Map<string, AvailableSlotResponse>();
-
-    for (const staff of eligibleStaff) {
-      const staffSlots = await this.buildSlotsForStaff(
-        staff,
-        branchId,
-        localDate,
-        timezone,
-        effectiveDurationMinutes,
-        bufferMinutes,
-        bookingConfig,
-        now
-      );
-      for (const slot of staffSlots) {
-        if (!slotMap.has(slot.startTime)) {
-          slotMap.set(slot.startTime, slot);
-        }
-      }
-    }
-
-    // Sort slots by startTime ascending
-    const sortedSlots = Array.from(slotMap.values()).sort((a, b) =>
-      a.startTime.localeCompare(b.startTime)
+    const slots = await this.buildSlotsForStaff(
+      requestedStaff[0],
+      branchId,
+      localDate,
+      timezone,
+      effectiveDurationMinutes,
+      bufferMinutes,
+      bookingConfig,
+      now
     );
 
-    return { date, branchId, serviceId, timezone, availableSlots: sortedSlots };
+    return { date, branchId, serviceId, timezone, availableSlots: slots };
   }
+
 
   /**
    * Validates whether a specific slot is available.
@@ -319,6 +283,10 @@ export class AvailabilityService {
    */
   async validateSlot(input: ValidateSlotInput): Promise<SlotValidationResponse> {
     const { businessId, branchId, serviceId, staffId, startTime, source = 'PUBLIC' } = input;
+
+    if (!staffId) {
+      return { valid: false, overrideAllowed: false, conflictType: 'STAFF_NOT_QUALIFIED', reason: 'staffId is required for MVP' };
+    }
 
     // ── Hard validation: entity existence & relationships ────────
     const [business, branch, service, staff] = await Promise.all([
@@ -370,7 +338,9 @@ export class AvailabilityService {
       return { valid: false, overrideAllowed: false, conflictType: 'SLOT_OUTSIDE_BRANCH_HOURS', reason: 'Online booking is disabled' };
     }
 
-    if (bookingConfig) {
+    // Advance-booking windows apply to public/online booking only.
+    // Internal walk-in / operator bookings must still be able to start at current branch time.
+    if (source === 'PUBLIC' && bookingConfig) {
       const earliestAllowed = now.plus({ minutes: bookingConfig.minimumAdvanceBookingMinutes });
       const latestAllowed = now.plus({ days: bookingConfig.maximumAdvanceBookingDays });
 
@@ -389,6 +359,8 @@ export class AvailabilityService {
       return { valid: false, overrideAllowed: false, conflictType: 'BRANCH_CLOSED', reason: 'Branch is closed on this date' };
     }
 
+    console.log(`Branch operating intervals for ${branchId} on ${localDate.toISODate()}:`, branchIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
+
     const isFeasibleInBranch = isSlotFeasible(
       requestedStart,
       serviceConfig.effectiveDurationMinutes,
@@ -400,7 +372,15 @@ export class AvailabilityService {
     }
 
     // Staff effective intervals
-    const staffIntervals = await getStaffEffectiveIntervals(staffId, branchId, localDate, timezone);
+    const staffIntervals = await getStaffEffectiveIntervals(
+      staffId,
+      branchId,
+      localDate,
+      timezone,
+      input.excludeAppointmentId
+    );
+
+    console.log(`Staff effective intervals for ${staffId} on ${localDate.toISODate()}:`, staffIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
     if (staffIntervals.length === 0) {
       return { valid: false, overrideAllowed: true, conflictType: 'STAFF_NOT_WORKING', reason: 'Staff has no availability on this date' };
     }
@@ -418,6 +398,9 @@ export class AvailabilityService {
         getStaffBreakIntervals(staffId, localDate, timezone),
         getStaffTimeOffIntervals(staffId, localDate, timezone),
       ]);
+
+      console.log(`Break intervals for staff ${staffId} on ${localDate.toISODate()}:`, breakIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
+      console.log(`Time off intervals for staff ${staffId} on ${localDate.toISODate()}:`, timeOffIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
 
       const reservedEnd = requestedStart.plus({ minutes: serviceConfig.effectiveDurationMinutes + serviceConfig.bufferMinutes });
       const slotInterval = { start: requestedStart, end: reservedEnd };
@@ -482,6 +465,9 @@ export class AvailabilityService {
       localDate,
       timezone
     );
+
+    console.log(`Effective intervals for staff ${staff.id} on ${localDate.toISODate()}:`, effectiveIntervals.map(iv => ({ start: iv.start.toISO(), end: iv.end.toISO() })));
+
     if (effectiveIntervals.length === 0) return [];
 
     let candidates = generateSlots(effectiveIntervals, durationMin, bufferMin);

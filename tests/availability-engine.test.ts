@@ -410,11 +410,13 @@ async function runTests() {
   // ── 7. GET AVAILABLE SLOTS ────────────────────────────────────
   console.log('\n── 7. Get Available Slots ──');
 
+  // MVP: staffId is required
   const slotsResult = await availabilityService.getAvailableSlots({
     businessId: f.business.id,
     branchId: f.branchA.id,
     serviceId: f.serviceA.id,
     date: TEST_DATE,
+    staffId: f.staffHana.id,
     source: 'INTERNAL',
   });
   assert(slotsResult.availableSlots.length > 0, 'Available slots returned for a valid request');
@@ -435,29 +437,37 @@ async function runTests() {
     assert(!overlapsBreak || slot.staff.id !== f.staffHana.id, `Hana's slot doesn't overlap her 13:00-14:00 break`);
   }
 
-  // ── 8. SALON_ASSIGNS determinism ─────────────────────────────
-  console.log('\n── 8. Determinism ──');
+  // ── 8. staffId Required (MVP) ─────────────────────────────────
+  console.log('\n── 8. staffId Required (MVP) ──');
 
+  await assertThrows(
+    () => availabilityService.getAvailableSlots({
+      businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, source: 'INTERNAL',
+    }),
+    'Missing staffId throws error'
+  );
+
+  // Determinism: same staff, same result
   const slots1 = await availabilityService.getAvailableSlots({
-    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, source: 'INTERNAL',
+    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id, source: 'INTERNAL',
   });
   const slots2 = await availabilityService.getAvailableSlots({
-    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, source: 'INTERNAL',
+    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id, source: 'INTERNAL',
   });
   assert(
     JSON.stringify(slots1.availableSlots) === JSON.stringify(slots2.availableSlots),
     'Availability is deterministic: same input → same output'
   );
 
-  // ── 9. CUSTOMER_CHOOSES ───────────────────────────────────────
-  console.log('\n── 9. CUSTOMER_CHOOSES mode ──');
+  // ── 9. CUSTOMER_CHOOSES mode / staffId enforcement ───────────
+  console.log('\n── 9. staffId Required: all modes ──');
 
-  // Without staffId → should throw
+  // Without staffId → should throw (MVP requirement)
   await assertThrows(
     () => availabilityService.getAvailableSlots({
       businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceB.id, date: TEST_DATE, source: 'INTERNAL',
     }),
-    'CUSTOMER_CHOOSES without staffId throws error'
+    'serviceB without staffId throws error'
   );
 
   // With valid staffId (Hana is qualified for serviceB)
@@ -465,10 +475,10 @@ async function runTests() {
     businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceB.id,
     date: TEST_DATE, staffId: f.staffHana.id, source: 'INTERNAL',
   });
-  assert(customerChoosesSlots.availableSlots.length > 0, 'CUSTOMER_CHOOSES with valid staff returns slots');
+  assert(customerChoosesSlots.availableSlots.length > 0, 'serviceB with valid staff returns slots');
   assert(
     customerChoosesSlots.availableSlots.every((s) => s.staff.id === f.staffHana.id),
-    'CUSTOMER_CHOOSES: all slots belong to requested staff'
+    'All slots belong to requested staff'
   );
 
   // With unqualified staffId (Sara not qualified for serviceB)
@@ -477,7 +487,7 @@ async function runTests() {
       businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceB.id,
       date: TEST_DATE, staffId: f.staffSara.id, source: 'INTERNAL',
     }),
-    'CUSTOMER_CHOOSES with unqualified staff throws error'
+    'Unqualified staff throws error'
   );
 
   // ── 10. ENTITY VALIDATION ─────────────────────────────────────
@@ -485,19 +495,19 @@ async function runTests() {
 
   // Invalid business
   await assertThrows(
-    () => availabilityService.getAvailableSlots({ businessId: 'nonexistent-id', branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE }),
+    () => availabilityService.getAvailableSlots({ businessId: 'nonexistent-id', branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id }),
     'Invalid businessId throws'
   );
 
   // Inactive branch
   await assertThrows(
-    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchB.id, serviceId: f.serviceA.id, date: TEST_DATE }),
+    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchB.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id }),
     'Inactive branch throws'
   );
 
   // Branch from other business
   await assertThrows(
-    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchOther.id, serviceId: f.serviceA.id, date: TEST_DATE }),
+    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchOther.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id }),
     'Branch from another business throws'
   );
 
@@ -507,13 +517,13 @@ async function runTests() {
     data: { businessId: f.business.id, categoryId: catB.id, name: 'Gel Nails', durationMinutes: 60, price: 200, employeeAssignmentMode: 'SALON_ASSIGNS', status: 'ACTIVE' },
   });
   await assertThrows(
-    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchA.id, serviceId: svcNotAtBranch.id, date: TEST_DATE }),
+    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchA.id, serviceId: svcNotAtBranch.id, date: TEST_DATE, staffId: f.staffHana.id }),
     'Service not assigned to branch throws'
   );
 
   // Invalid date format
   await assertThrows(
-    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: 'not-a-date' }),
+    () => availabilityService.getAvailableSlots({ businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: 'not-a-date', staffId: f.staffHana.id }),
     'Invalid date format throws'
   );
 
@@ -526,7 +536,7 @@ async function runTests() {
     data: { onlineBookingEnabled: false },
   });
   const disabledSlots = await availabilityService.getAvailableSlots({
-    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, source: 'PUBLIC',
+    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id, source: 'PUBLIC',
   });
   assert(disabledSlots.availableSlots.length === 0, 'Online booking disabled: no public slots');
   // Restore
@@ -535,7 +545,7 @@ async function runTests() {
   // Date beyond max advance booking → empty
   await prisma.branchBookingConfig.update({ where: { branchId: f.branchA.id }, data: { maximumAdvanceBookingDays: 1 } });
   const farFutureSlots = await availabilityService.getAvailableSlots({
-    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, source: 'PUBLIC',
+    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: TEST_DATE, staffId: f.staffHana.id, source: 'PUBLIC',
   });
   assert(farFutureSlots.availableSlots.length === 0, 'Date beyond maxAdvanceDays: no slots returned');
   // Restore
@@ -543,7 +553,7 @@ async function runTests() {
 
   // Past date → empty
   const pastSlots = await availabilityService.getAvailableSlots({
-    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: '2020-01-01', source: 'PUBLIC',
+    businessId: f.business.id, branchId: f.branchA.id, serviceId: f.serviceA.id, date: '2020-01-01', staffId: f.staffHana.id, source: 'PUBLIC',
   });
   assert(pastSlots.availableSlots.length === 0, 'Past date returns no slots (min advance violation)');
 
@@ -668,8 +678,123 @@ async function runTests() {
   assert(invalidTimeValidation.valid === false, 'Invalid startTime format: invalid');
   assert(invalidTimeValidation.conflictType === 'INVALID_START_TIME', 'conflictType is INVALID_START_TIME');
 
-  // ── 13. CROSS-BUSINESS SECURITY ───────────────────────────────
-  console.log('\n── 13. Cross-Business Security ──');
+  // ── 13. EXISTING APPOINTMENT BLOCKING ─────────────────────────
+  console.log('\n── 13. Existing Appointment Blocking ──');
+
+  // Create a customer for test appointments
+  const apptCustomer = await prisma.customer.create({
+    data: { businessId: f.business.id, firstName: 'Test', lastName: 'Customer', status: 'ACTIVE' },
+  });
+
+  // Create a blocking appointment for Hana at 09:00 on TEST_DATE
+  // serviceA: duration=45, buffer=15 → reserved until 10:00
+  const apptStart = new Date(`${TEST_DATE}T06:00:00.000Z`); // 09:00 in UTC+3
+  const apptEnd   = new Date(`${TEST_DATE}T06:45:00.000Z`); // 09:45 in UTC+3 (service end)
+  const blockingAppt = await prisma.appointment.create({
+    data: {
+      businessId: f.business.id,
+      branchId: f.branchA.id,
+      customerId: apptCustomer.id,
+      serviceId: f.serviceA.id,
+      scheduledStart: apptStart,
+      scheduledEnd: apptEnd,
+      status: 'CONFIRMED',
+      totalAmount: 100,
+      staff: { create: { staffId: f.staffHana.id } },
+    },
+  });
+
+  // Now query Hana's availability: 09:00 should be blocked (reserved until 10:00 incl. buffer)
+  const slotsAfterBooking = await availabilityService.getAvailableSlots({
+    businessId: f.business.id,
+    branchId: f.branchA.id,
+    serviceId: f.serviceA.id,
+    date: TEST_DATE,
+    staffId: f.staffHana.id,
+    source: 'INTERNAL',
+  });
+
+  const blockedStart = slotsAfterBooking.availableSlots.find(s => {
+    const dt = DateTime.fromISO(s.startTime);
+    return dt.hour === 9 && dt.minute === 0;
+  });
+  assert(blockedStart === undefined, 'CONFIRMED appointment at 09:00 blocks 09:00 slot');
+
+  // 09:15 is still within the buffer (reserved until 10:00), also blocked
+  const blockedAt915 = slotsAfterBooking.availableSlots.find(s => {
+    const dt = DateTime.fromISO(s.startTime);
+    return dt.hour === 9 && dt.minute === 15;
+  });
+  assert(blockedAt915 === undefined, '09:15 slot also blocked (within 15-min buffer of 09:00 appointment)');
+
+  // 10:00 should be free
+  const freeAt10 = slotsAfterBooking.availableSlots.find(s => {
+    const dt = DateTime.fromISO(s.startTime);
+    return dt.hour === 10 && dt.minute === 0;
+  });
+  assert(freeAt10 !== undefined, '10:00 slot is free after reserved period ends');
+
+  // CANCELLED appointment does NOT block
+  const cancelledAppt = await prisma.appointment.create({
+    data: {
+      businessId: f.business.id,
+      branchId: f.branchA.id,
+      customerId: apptCustomer.id,
+      serviceId: f.serviceA.id,
+      scheduledStart: new Date(`${TEST_DATE}T08:00:00.000Z`), // 11:00 in UTC+3
+      scheduledEnd:   new Date(`${TEST_DATE}T08:45:00.000Z`), // 11:45
+      status: 'CANCELLED',
+      totalAmount: 100,
+      staff: { create: { staffId: f.staffHana.id } },
+    },
+  });
+  const slotsWithCancelled = await availabilityService.getAvailableSlots({
+    businessId: f.business.id,
+    branchId: f.branchA.id,
+    serviceId: f.serviceA.id,
+    date: TEST_DATE,
+    staffId: f.staffHana.id,
+    source: 'INTERNAL',
+  });
+  const at11 = slotsWithCancelled.availableSlots.find(s => {
+    const dt = DateTime.fromISO(s.startTime);
+    return dt.hour === 11 && dt.minute === 0;
+  });
+  assert(at11 !== undefined, 'CANCELLED appointment does not block 11:00 slot');
+
+  // Test with different statuses that DO block
+  for (const blockingStatus of ['PENDING', 'CHECKED_IN', 'IN_PROGRESS'] as const) {
+    const statusAppt = await prisma.appointment.create({
+      data: {
+        businessId: f.business.id,
+        branchId: f.branchA.id,
+        customerId: apptCustomer.id,
+        serviceId: f.serviceA.id,
+        scheduledStart: new Date(`${TEST_DATE}T09:00:00.000Z`), // 12:00 in UTC+3
+        scheduledEnd:   new Date(`${TEST_DATE}T09:45:00.000Z`), // 12:45 in UTC+3
+        status: blockingStatus,
+        totalAmount: 100,
+        staff: { create: { staffId: f.staffSara.id } },
+      },
+    });
+    const slotsBlocked = await availabilityService.getAvailableSlots({
+      businessId: f.business.id,
+      branchId: f.branchA.id,
+      serviceId: f.serviceA.id,
+      date: TEST_DATE,
+      staffId: f.staffSara.id,
+      source: 'INTERNAL',
+    });
+    const at12 = slotsBlocked.availableSlots.find(s => {
+      const dt = DateTime.fromISO(s.startTime);
+      return dt.hour === 12 && dt.minute === 0;
+    });
+    assert(at12 === undefined, `${blockingStatus} appointment blocks 12:00 slot for Sara`);
+    await prisma.appointment.delete({ where: { id: statusAppt.id } });
+  }
+
+  // ── 14. CROSS-BUSINESS SECURITY ───────────────────────────────
+  console.log('\n── 14. Cross-Business Security ──');
 
   await assertThrows(
     () => availabilityService.getAvailableSlots({
@@ -677,6 +802,7 @@ async function runTests() {
       branchId: f.branchA.id, // belongs to f.business, not f.bizOther
       serviceId: f.serviceA.id,
       date: TEST_DATE,
+      staffId: f.staffHana.id,
     }),
     'Cross-business: branch from another business throws'
   );

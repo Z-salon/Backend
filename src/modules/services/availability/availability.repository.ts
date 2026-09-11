@@ -1,5 +1,6 @@
 import { prisma } from '../../../libs/prisma';
 import { DateTime } from 'luxon';
+import { TimeInterval, createInterval } from './interval.utils';
 
 export class AvailabilityRepository {
   async getBranchBookingConfig(branchId: string) {
@@ -201,14 +202,62 @@ export class AvailabilityRepository {
   }
 
   /**
-   * Abstraction for future Appointment model integration.
-   * Returns empty array for now.
+   * Returns blocking intervals (startTime, reservedEndTime)
+   * where status IN ('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS')
    */
-  async getStaffBusyIntervalsFromAppointments(staffId: string, date: DateTime, timezone: string) {
-    // TODO: Implement when Appointment model exists
-    // Should return blocking intervals (startTime, reservedEndTime)
-    // where status IN ('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS')
-    return [];
+  async getStaffBusyIntervalsFromAppointments(
+    staffId: string,
+    date: DateTime,
+    timezone: string,
+    excludeAppointmentId?: string
+  ): Promise<TimeInterval[]> {
+    const dayStart = date.startOf('day').toJSDate();
+    const dayEnd = date.endOf('day').toJSDate();
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        staff: {
+          some: { staffId },
+        },
+        status: {
+          in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'],
+        },
+        scheduledStart: {
+          lt: dayEnd,
+        },
+        scheduledEnd: {
+          gt: dayStart,
+        },
+        ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+      },
+      include: {
+        service: {
+          include: {
+            branchAssignments: true,
+          },
+        },
+      },
+    });
+
+    const intervals: TimeInterval[] = [];
+    for (const appt of appointments) {
+      let bufferMinutes = 0;
+      
+      const branchAssignment = appt.service.branchAssignments.find(
+        (ba) => ba.branchId === appt.branchId
+      );
+      
+      if (branchAssignment && branchAssignment.bufferMinutes !== undefined) {
+        bufferMinutes = branchAssignment.bufferMinutes;
+      }
+
+      const start = DateTime.fromJSDate(appt.scheduledStart).setZone(timezone);
+      const end = DateTime.fromJSDate(appt.scheduledEnd).setZone(timezone).plus({ minutes: bufferMinutes });
+
+      intervals.push(createInterval(start, end));
+    }
+
+    return intervals;
   }
 }
 

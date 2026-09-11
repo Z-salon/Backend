@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSmsProvider = getSmsProvider;
 exports.sendOtpSms = sendOtpSms;
 exports.sendInvitationLinkSms = sendInvitationLinkSms;
+exports.sendAppointmentConfirmationSms = sendAppointmentConfirmationSms;
 const console_sms_provider_1 = require("./console-sms.provider");
 let smsProvider;
 function getSmsProvider() {
@@ -38,5 +39,13 @@ function sendInvitationLinkSms(phone, invitationUrl) {
     return __awaiter(this, void 0, void 0, function* () {
         const provider = getSmsProvider();
         yield provider.sendInvitationLink(phone, invitationUrl);
+    });
+}
+function sendAppointmentConfirmationSms(phone, scheduledStart, scheduledEnd) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const start = scheduledStart.toISOString();
+        const end = scheduledEnd.toISOString();
+        yield provider.sendMessage(phone, `Your appointment is confirmed from ${start} to ${end}.`);
     });
 }

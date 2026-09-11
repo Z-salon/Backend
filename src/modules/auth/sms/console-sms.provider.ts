@@ -27,6 +27,19 @@ export class ConsoleSmsProvider implements SmsProvider {
     console.log(`🔗 Invite link: ${invitationUrl}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   }
+
+  async sendMessage(phone: string, message: string): Promise<void> {
+    if (config.isProduction) {
+      console.warn('⚠️ ConsoleSmsProvider should not be used in production');
+      return;
+    }
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📱 SMS (Development Mode)');
+    console.log(`📞 To: ${phone}`);
+    console.log(`💬 ${message}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
 }
 
 // Future implementation for production SMS providers
