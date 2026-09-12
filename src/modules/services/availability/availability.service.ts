@@ -251,29 +251,44 @@ export class AvailabilityService {
       }
     }
 
-    const { effectiveDurationMinutes, bufferMinutes, employeeAssignmentMode } = serviceConfig;
+    const { effectiveDurationMinutes, bufferMinutes } = serviceConfig;
+    const eligibleStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
 
-    if (!staffId) {
-      throw ApiError.badRequest('staffId is required for MVP');
+    if (eligibleStaff.length === 0) {
+      return { date, branchId, serviceId, timezone, availableSlots: [] };
     }
 
-    const requestedStaff = await this.getEligibleStaff(businessId, branchId, serviceId, staffId);
-    if (requestedStaff.length === 0) {
-      throw ApiError.badRequest('Staff not eligible for this service at this branch');
+    // Merge each staff member's slots by start time so callers can choose a
+    // staff member after selecting a service slot.
+    const slotsByStart = new Map<string, AvailableSlotResponse>();
+
+    for (const staff of eligibleStaff) {
+      const staffSlots = await this.buildSlotsForStaff(
+        staff,
+        branchId,
+        localDate,
+        timezone,
+        effectiveDurationMinutes,
+        bufferMinutes,
+        bookingConfig,
+        now
+      );
+
+      for (const slot of staffSlots) {
+        const existingSlot = slotsByStart.get(slot.startTime);
+        if (existingSlot) {
+          existingSlot.staff.push(...slot.staff);
+        } else {
+          slotsByStart.set(slot.startTime, slot);
+        }
+      }
     }
 
-    const slots = await this.buildSlotsForStaff(
-      requestedStaff[0],
-      branchId,
-      localDate,
-      timezone,
-      effectiveDurationMinutes,
-      bufferMinutes,
-      bookingConfig,
-      now
+    const availableSlots = Array.from(slotsByStart.values()).sort((a, b) =>
+      a.startTime.localeCompare(b.startTime)
     );
 
-    return { date, branchId, serviceId, timezone, availableSlots: slots };
+    return { date, branchId, serviceId, timezone, availableSlots };
   }
 
 
@@ -482,7 +497,7 @@ export class AvailabilityService {
       startTime: slot.startTime.toISO()!,
       serviceEndTime: slot.serviceEndTime.toISO()!,
       reservedEndTime: slot.reservedEndTime.toISO()!,
-      staff: { id: staff.id, firstName: staff.firstName, lastName: staff.lastName },
+      staff: [{ id: staff.id, firstName: staff.firstName, lastName: staff.lastName }],
     }));
   }
 

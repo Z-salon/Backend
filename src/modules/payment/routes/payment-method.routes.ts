@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { paymentMethodController } from '../controllers/payment-method.controller';
 import { authenticate } from '../../../middlewares/authenticate';
 
-const router = Router({ mergeParams: true });
+const router = Router();
 
 router.use(authenticate);
 
@@ -18,7 +18,16 @@ router.use(authenticate);
  *       required: true
  *       content:
  *         application/json:
- *           schema: { type: object, additionalProperties: true }
+ *           schema: 
+ *             type: object
+ *             properties: 
+ *               name: { type: string , required: true }
+ *               type: { type: string , enum: [CASH, BANK_TRANSFER, MOBILE_MONEY], required: true }
+ *               accountName: { type: string }
+ *               accountNumber: { type: string }
+ *               instructions: { type: string }
+ *               isActive: { type: boolean }
+ *               displayOrder: { type: number }
  *     responses:
  *       201: { description: Payment method created successfully }
  *       400: { description: Invalid input }

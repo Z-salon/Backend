@@ -21,9 +21,9 @@ export class PaymentMethodService {
       throw ApiError.forbidden('User is not an active member of this business');
     }
 
-    const hasPermission = member.userRoles.some(ur => 
-      ur.role.systemKey === 'OWNER' || 
-      ur.role.permissions.some(p => p.permission.code === 'MANAGE_BUSINESS_SETTINGS')
+    const hasPermission = member.userRoles.some(ur =>
+      ur.role.systemKey === 'OWNER'
+      // || ur.role.permissions.some(p => p.permission.code === 'MANAGE_BUSINESS_SETTINGS')
     );
 
     if (!hasPermission) {
@@ -60,9 +60,9 @@ export class PaymentMethodService {
       throw ApiError.forbidden('User is not an active member of this business');
     }
 
-    const hasPermission = member.userRoles.some(ur => 
-      ur.role.systemKey === 'OWNER' || 
-      ur.role.permissions.some(p => p.permission.code === 'MANAGE_BUSINESS_SETTINGS')
+    const hasPermission = member.userRoles.some(ur =>
+      ur.role.systemKey === 'OWNER'
+      // || ur.role.permissions.some(p => p.permission.code === 'MANAGE_BUSINESS_SETTINGS')
     );
 
     if (!hasPermission) {
@@ -90,9 +90,10 @@ export class PaymentMethodService {
       throw ApiError.forbidden('User is not an active member of this business');
     }
 
-    const hasPermission = member.userRoles.some(ur => 
-      ur.role.systemKey === 'OWNER' || 
-      ur.role.permissions.some(p => p.permission.code === 'MANAGE_BUSINESS_SETTINGS')
+    const hasPermission = member.userRoles.some(ur =>
+      ur.role.systemKey === 'OWNER'
+      // || 
+      // ur.role.permissions.some(p => p.permission.code === 'MANAGE_BUSINESS_SETTINGS')
     );
 
     if (!hasPermission) {

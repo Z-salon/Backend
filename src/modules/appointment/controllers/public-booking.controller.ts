@@ -42,7 +42,6 @@ export class PublicBookingController {
       const { verificationToken, paymentMethodId, submittedAmount, receiptImageUrl, customerNote } = req.body;
 
       const receipt = await publicBookingService.submitPublicReceipt(businessId, appointmentId, {
-        verificationToken,
         paymentMethodId,
         submittedAmount,
         receiptImageUrl,

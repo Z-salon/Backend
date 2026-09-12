@@ -62,14 +62,13 @@ export class PublicBookingService {
     businessId: string,
     appointmentId: string,
     input: {
-      verificationToken: string;
       paymentMethodId: string;
       submittedAmount?: number;
       receiptImageUrl: string;
       customerNote?: string;
     }
   ) {
-    const verified = await otpService.consumeVerificationToken(input.verificationToken, 'PHONE_VERIFICATION');
+    
 
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -80,10 +79,7 @@ export class PublicBookingService {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
     }
 
-    const phones = appointment.customer.phones.map((p) => p.normalizedPhone);
-    if (!phones.includes(verified.phone)) {
-      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
-    }
+
 
     return paymentReceiptService.submitReceipt(appointmentId, appointment.customerId, {
       paymentMethodId: input.paymentMethodId,

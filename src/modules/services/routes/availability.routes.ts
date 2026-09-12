@@ -89,10 +89,19 @@ router.get(
  *       required: true
  *       content:
  *         application/json:
- *           schema: { type: object, required: [branchId, serviceId, scheduledStart, scheduledEnd], additionalProperties: true }
+ *           schema:
+ *             type: object
+ *             required: [branchId, serviceId, staffId, startTime]
+ *             properties:
+ *               branchId: { type: string, format: uuid }
+ *               serviceId: { type: string, format: uuid }
+ *               staffId: { type: string, format: uuid }
+ *               startTime: { type: string, format: date-time }
+ *               source: { type: string, enum: [PUBLIC, INTERNAL], default: PUBLIC }
  *     responses:
  *       200: { description: Slot validation result }
  *       400: { description: Invalid slot data }
+ *       409: { description: Slot conflict }
  *       404: { description: Business, branch, service, or staff not found }
  */
 router.post(

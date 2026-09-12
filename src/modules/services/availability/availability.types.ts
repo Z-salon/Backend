@@ -84,11 +84,11 @@ export interface AvailableSlotResponse {
   startTime: string; // ISO string with offset
   serviceEndTime: string;
   reservedEndTime: string;
-  staff: {
+  staff: Array<{
     id: string;
     firstName: string;
     lastName: string;
-  };
+  }>;
 }
 
 export interface AvailabilityResponse {

@@ -216,7 +216,7 @@ export class AppointmentService {
       }
 
       return appointment;
-    });
+    }, { timeout: 10000 });
 
     if (initialStatus === AppointmentStatus.CONFIRMED) {
       await this.sendConfirmationSms(customer, appointment.scheduledStart, appointment.scheduledEnd);

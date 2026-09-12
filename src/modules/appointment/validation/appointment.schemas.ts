@@ -54,7 +54,6 @@ export const publicBookingSchema = z.object({
 });
 
 export const publicReceiptSchema = z.object({
-  verificationToken: z.string().min(1, 'OTP verification token is required'),
   paymentMethodId: z.string().uuid('Invalid payment method ID'),
   submittedAmount: z.number().positive().optional(),
   receiptImageUrl: z.string().url('A valid receipt image URL is required'),

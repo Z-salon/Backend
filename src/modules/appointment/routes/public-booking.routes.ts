@@ -50,6 +50,21 @@ router.post(
  *     parameters:
  *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
  *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [paymentMethodId, receiptImageUrl, submittedAmount]
+ *             properties:
+ *               paymentMethodId: { type: string, format: uuid }
+ *               submittedAmount: { oneOf: [{ type: number }, { type: string }] }
+ *               receiptImageUrl: { type: string, format: uri }
+ *               customerNote: { type: string }
+ *     responses:
+ *       201: { description: Receipt submitted for verification }
+ *       400: { description: Invalid input }
  */
 router.post(
   '/businesses/:businessId/appointments/:appointmentId/payment-receipts',
