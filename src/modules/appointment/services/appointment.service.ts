@@ -3,15 +3,24 @@ import { prisma } from '../../../libs/prisma';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
 import { auditLogService } from '../../business/services/audit-log.service';
 import { availabilityService } from '../../services/availability/availability.service';
+import {
+  BUSY_APPOINTMENT_STATUSES,
+  busyWindowsOverlap,
+  getAppointmentBusyWindow,
+  getEffectiveAppointmentEnd,
+} from '../../services/availability/appointment-busy-interval';
 import { appointmentMatchingService } from './appointment-matching.service';
 import {
   AppointmentCreateCoreInput,
   AppointmentValidationResult,
   AppointmentResponse,
 } from '../types';
-import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignmentMode } from '@prisma/client';
+import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignmentMode, CustomerConfirmationStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { sendAppointmentConfirmationSms } from '../../auth/sms/sms.service';
+
+/** Upper bound for a single operational extension (8 hours). */
+const MAX_APPOINTMENT_EXTENSION_MINUTES = 480;
 
 export class AppointmentService {
   /**
@@ -218,7 +227,19 @@ export class AppointmentService {
       return appointment;
     }, { timeout: 10000 });
 
-    if (initialStatus === AppointmentStatus.CONFIRMED) {
+    const confirmationRequired =
+      bookingSource === BookingSource.ONLINE &&
+      initialStatus === AppointmentStatus.CONFIRMED &&
+      bookingConfig?.customerConfirmationEnabled === true;
+
+    if (confirmationRequired) {
+      // Imported lazily to avoid a circular import at module load time
+      // (customer-confirmation -> customer-appointment -> appointment).
+      const { customerConfirmationService } = await import('./customer-confirmation.service');
+      await customerConfirmationService.sendConfirmationRequest(appointment.id).catch((err) => {
+        console.error('Failed to send customer confirmation request', err);
+      });
+    } else if (initialStatus === AppointmentStatus.CONFIRMED) {
       await this.sendConfirmationSms(customer, appointment.scheduledStart, appointment.scheduledEnd);
     }
 
@@ -394,7 +415,12 @@ export class AppointmentService {
        throw new ApiError(400, 'Service configuration not found', ErrorCodes.VALIDATION_ERROR);
     }
     const newBuffer = newServiceConfig.bufferMinutes || 0;
-    const newReservedEnd = new Date(input.scheduledEnd.getTime() + newBuffer * 60000);
+
+    // The prospective window (no status/actualEnd): effective end is its scheduled end.
+    const newWindow = getAppointmentBusyWindow(
+      { scheduledStart: input.scheduledStart, scheduledEnd: input.scheduledEnd },
+      newBuffer
+    );
 
     const dayStart = new Date(input.scheduledStart);
     dayStart.setHours(0, 0, 0, 0);
@@ -404,8 +430,12 @@ export class AppointmentService {
     const where: any = {
       staff: { some: { staffId: input.staffId } },
       scheduledStart: { lt: dayEnd },
-      scheduledEnd: { gt: dayStart },
-      status: { notIn: ['CANCELLED', 'NO_SHOW', 'EXPIRED'] },
+      // A candidate may end after dayStart either by its schedule or by an extension.
+      OR: [
+        { scheduledEnd: { gt: dayStart } },
+        { extensions: { some: { extendedUntil: { gt: dayStart } } } },
+      ],
+      status: { in: BUSY_APPOINTMENT_STATUSES },
     };
 
     if (input.excludeAppointmentId) {
@@ -417,20 +447,23 @@ export class AppointmentService {
       include: {
         service: {
           include: { branchAssignments: true }
-        }
+        },
+        extensions: { orderBy: { extendedUntil: 'desc' }, take: 1 },
       }
     });
 
     for (const appt of appointments) {
-      let existingBuffer = 0;
       const branchAssignment = appt.service.branchAssignments.find((ba: any) => ba.branchId === appt.branchId);
-      if (branchAssignment && branchAssignment.bufferMinutes !== undefined) {
-        existingBuffer = branchAssignment.bufferMinutes;
-      }
-      const existingReservedEnd = new Date(appt.scheduledEnd.getTime() + existingBuffer * 60000);
+      const existingBuffer =
+        branchAssignment && branchAssignment.bufferMinutes !== undefined
+          ? branchAssignment.bufferMinutes
+          : 0;
 
-      // Check for overlap: newStart < existingReservedEnd AND existingStart < newReservedEnd
-      if (input.scheduledStart < existingReservedEnd && appt.scheduledStart < newReservedEnd) {
+      // Overlap test on the operational windows: newStart < existingReservedEnd
+      // AND existingStart < newReservedEnd. Uses extensions and actual completion
+      // so an extended or early-released appointment blocks the right range.
+      const existingWindow = getAppointmentBusyWindow(appt, existingBuffer);
+      if (busyWindowsOverlap(newWindow, existingWindow)) {
         throw new ApiError(409, 'Time slot conflicts with existing appointment', ErrorCodes.CONFLICT);
       }
     }
@@ -454,6 +487,7 @@ export class AppointmentService {
           orderBy: { transitionTimestamp: 'asc' },
           include: { actor: { select: { id: true, phone: true } } },
         },
+        extensions: { orderBy: { extendedUntil: 'desc' } },
       },
     });
 
@@ -461,7 +495,7 @@ export class AppointmentService {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
     }
 
-    return this.mapToResponse(appointment);
+    return this.mapToResponse(appointment, { includeExtensions: true });
   }
 
   async getAppointments(businessId: string, userId: string, query: any) {
@@ -501,12 +535,13 @@ export class AppointmentService {
           customer: { select: { id: true, firstName: true, lastName: true, phones: { select: { phone: true, isPrimary: true } } } },
           service: { select: { id: true, name: true, durationMinutes: true, price: true } },
           staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+          extensions: { orderBy: { extendedUntil: 'desc' }, take: 1 },
         },
       }),
     ]);
 
     return {
-      data: appointments.map(this.mapToResponse),
+      data: appointments.map((appointment) => this.mapToResponse(appointment, { includeExtensions: true })),
       meta: { total, page: query.page, limit: query.limit, totalPages: Math.ceil(total / query.limit) },
     };
   }
@@ -573,7 +608,14 @@ export class AppointmentService {
     return this.mapToResponse(updated);
   }
 
-  async transitionStatus(appointmentId: string, businessId: string, userId: string, status: AppointmentStatus, reason?: string) {
+  async transitionStatus(
+    appointmentId: string,
+    businessId: string,
+    userId: string,
+    status: AppointmentStatus,
+    reason?: string,
+    actualEnd?: Date
+  ) {
     const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
     if (!appointment || appointment.businessId !== businessId) {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
@@ -586,6 +628,30 @@ export class AppointmentService {
       throw new ApiError(400, `Cannot transition from ${appointment.status} to ${status}`, ErrorCodes.INVALID_SCOPE_CONFIGURATION);
     }
 
+    // Actual (operational) times are tracked separately from scheduledStart/scheduledEnd,
+    // which are never modified. On completion this is what lets a staff member be
+    // released early — or held longer when the service overruns.
+    let completionTime: Date | undefined;
+    if (status === AppointmentStatus.COMPLETED) {
+      if (actualEnd !== undefined) {
+        // An explicit release time is the early-release (or overrun) path, so it is
+        // validated. It must be a real date after the appointment started.
+        if (Number.isNaN(actualEnd.getTime())) {
+          throw new ApiError(400, 'actualEnd is not a valid date', ErrorCodes.VALIDATION_ERROR);
+        }
+        if (actualEnd.getTime() <= appointment.scheduledStart.getTime()) {
+          throw new ApiError(400, 'Completion time must be after the appointment start time', ErrorCodes.VALIDATION_ERROR);
+        }
+        completionTime = actualEnd;
+      } else {
+        // Default (existing behaviour): record the moment staff completed it. This must
+        // never throw — completing a future-scheduled appointment is legitimate, and
+        // the busy-window helper tolerates an actualEnd before scheduledStart.
+        completionTime = new Date();
+      }
+    }
+    const startTime = status === AppointmentStatus.IN_PROGRESS ? (appointment.actualStart ?? new Date()) : undefined;
+
     const updated = await prisma.$transaction(async (tx) => {
       const timestampField = this.getTimestampField(status);
       const updated = await tx.appointment.update({
@@ -593,6 +659,8 @@ export class AppointmentService {
         data: {
           status,
           ...(timestampField ? { [timestampField]: new Date() } : {}),
+          ...(startTime ? { actualStart: startTime } : {}),
+          ...(completionTime ? { actualEnd: completionTime } : {}),
         },
         include: {
           customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
@@ -619,8 +687,12 @@ export class AppointmentService {
           action: `APPOINTMENT_${status}`,
           entityType: 'Appointment',
           entityId: appointmentId,
-          oldValues: { status: appointment.status },
-          newValues: { status, reason },
+          oldValues: { status: appointment.status, actualEnd: appointment.actualEnd },
+          newValues: {
+            status,
+            reason,
+            ...(completionTime ? { actualEnd: completionTime } : {}),
+          },
         },
         tx
       );
@@ -658,7 +730,176 @@ export class AppointmentService {
     }
   }
 
-  async cancelAppointment(businessId: string, userId: string, appointmentId: string, reason?: string) {
+  async confirmAttendance(appointmentId: string, businessId: string, userId: string) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    if (appointment.confirmationStatus === CustomerConfirmationStatus.CONFIRMED) {
+      return appointment; // Idempotent
+    }
+
+    const updated = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        confirmationStatus: CustomerConfirmationStatus.CONFIRMED,
+        confirmedById: userId,
+        confirmationMethod: 'STAFF',
+      },
+      include: { customer: true }
+    });
+
+    return updated;
+  }
+
+  /**
+   * Extends an IN_PROGRESS appointment because the service is running longer than scheduled.
+   *
+   * Records a separate AppointmentExtension: the service's configured duration and the
+   * appointment's scheduledStart/scheduledEnd are never modified. Availability and conflict
+   * detection pick the extension up through getAppointmentBusyWindow().
+   *
+   * If the extension would overlap the staff member's next appointment the request is
+   * rejected — the following appointment is never moved or cancelled automatically.
+   */
+  async extendAppointment(
+    businessId: string,
+    userId: string,
+    appointmentId: string,
+    input: { extensionMinutes: number; reason?: string }
+  ) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        staff: { include: { staff: { select: { id: true, firstName: true, lastName: true, branchId: true } } } },
+        extensions: { orderBy: { extendedUntil: 'desc' }, take: 1 },
+      },
+    });
+
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    const assignedStaff = appointment.staff[0]?.staff ?? null;
+    if (!assignedStaff) {
+      throw new ApiError(400, 'Appointment has no assigned staff member to extend', ErrorCodes.VALIDATION_ERROR);
+    }
+    if (assignedStaff.branchId !== appointment.branchId) {
+      throw new ApiError(400, 'Appointment staff member does not belong to the appointment branch', ErrorCodes.VALIDATION_ERROR);
+    }
+    if (appointment.status !== AppointmentStatus.IN_PROGRESS) {
+      throw new ApiError(
+        400,
+        `Cannot extend an appointment in ${appointment.status} status. Only IN_PROGRESS appointments can be extended.`,
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+
+    const extensionMinutes = Number(input.extensionMinutes);
+    if (!Number.isInteger(extensionMinutes) || extensionMinutes <= 0) {
+      throw new ApiError(400, 'extensionMinutes must be a positive whole number of minutes', ErrorCodes.VALIDATION_ERROR);
+    }
+    if (extensionMinutes > MAX_APPOINTMENT_EXTENSION_MINUTES) {
+      throw new ApiError(
+        400,
+        `Extension cannot exceed ${MAX_APPOINTMENT_EXTENSION_MINUTES} minutes`,
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Re-read inside the transaction so concurrent extensions stack deterministically
+      // rather than both validating against the same stale end time.
+      const current = await tx.appointment.findUnique({
+        where: { id: appointmentId },
+        include: { extensions: { orderBy: { extendedUntil: 'desc' }, take: 1 } },
+      });
+      if (!current) {
+        throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+      }
+      if (current.status !== AppointmentStatus.IN_PROGRESS) {
+        throw new ApiError(
+          400,
+          `Cannot extend an appointment in ${current.status} status. Only IN_PROGRESS appointments can be extended.`,
+          ErrorCodes.VALIDATION_ERROR
+        );
+      }
+
+      const previousEndTime = getEffectiveAppointmentEnd(current);
+      const extendedUntil = new Date(previousEndTime.getTime() + extensionMinutes * 60_000);
+
+      // Reuses the existing conflict mechanism (now extension- and release-aware).
+      try {
+        await this.checkConflicts(tx, {
+          branchId: appointment.branchId,
+          staffId: assignedStaff.id,
+          scheduledStart: appointment.scheduledStart,
+          scheduledEnd: extendedUntil,
+          serviceId: appointment.serviceId,
+          excludeAppointmentId: appointmentId,
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.statusCode === 409) {
+          throw new ApiError(
+            409,
+            'Extension would overlap another appointment for this staff member. Reschedule the conflicting appointment first.',
+            ErrorCodes.APPOINTMENT_CONFLICT
+          );
+        }
+        throw error;
+      }
+
+      const extension = await tx.appointmentExtension.create({
+        data: {
+          appointmentId,
+          staffId: assignedStaff.id,
+          previousEndTime,
+          extendedUntil,
+          extensionMinutes,
+          reason: input.reason ?? null,
+          createdById: userId,
+        },
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_EXTENDED',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { effectiveEnd: previousEndTime, scheduledEnd: appointment.scheduledEnd },
+          newValues: {
+            effectiveEnd: extendedUntil,
+            extensionMinutes,
+            extensionId: extension.id,
+            reason: input.reason ?? null,
+          },
+        },
+        tx
+      );
+
+      return extension;
+    });
+
+    const refreshed = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        customer: { select: { id: true, firstName: true, lastName: true, phones: { select: { phone: true, isPrimary: true } } } },
+        service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+        staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        extensions: { orderBy: { extendedUntil: 'desc' } },
+      },
+    });
+
+    return this.mapToResponse(refreshed, { includeExtensions: true });
+  }
+
+  async cancelAppointment(businessId: string, userId: string, appointmentId: string, refund: boolean, refundAmount?: number, reason?: string) {
     const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
     if (!appointment || appointment.businessId !== businessId) {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
@@ -670,26 +911,20 @@ export class AppointmentService {
       throw new ApiError(400, `Cannot cancel an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    const config = await prisma.branchBookingConfig.findUnique({ where: { branchId: appointment.branchId } });
-
-    // Calculate actual amount paid from payment records (not the deprecated depositAmount field)
-    const paidPayments = await prisma.appointmentPayment.aggregate({
-      where: { appointmentId, status: 'PAID' },
-      _sum: { amount: true },
-    });
-    const amountPaid = paidPayments._sum.amount || new Prisma.Decimal(0);
-
-    // Determine refund amount based on policy
-    let refundableAmount = new Prisma.Decimal(0);
-
-    // For business cancellation, they might ignore the deadline or apply the same refund rules.
-    // For now, apply the refund rule if there's a payment.
-    if (amountPaid.gt(0) && config) {
-      if (config.refundPolicyType === 'FULL_REFUND') {
-        refundableAmount = amountPaid;
-      } else if (config.refundPolicyType === 'PARTIAL_REFUND' && config.refundPercentage) {
-        refundableAmount = amountPaid.mul(config.refundPercentage).div(100);
+    // Validation for refund logic
+    let verifiedRefundAmount = new Prisma.Decimal(0);
+    if (refund) {
+      const paidPayments = await prisma.appointmentPayment.aggregate({
+        where: { appointmentId, status: 'PAID' },
+        _sum: { amount: true },
+      });
+      const amountPaid = paidPayments._sum.amount || new Prisma.Decimal(0);
+      
+      if (refundAmount !== undefined && refundAmount > amountPaid.toNumber()) {
+        throw new ApiError(400, 'Refund amount cannot exceed actual paid amount', ErrorCodes.VALIDATION_ERROR);
       }
+      
+      verifiedRefundAmount = refundAmount !== undefined ? new Prisma.Decimal(refundAmount) : amountPaid;
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -717,14 +952,13 @@ export class AppointmentService {
         }
       });
 
-      if (amountPaid.gt(0)) {
-        await tx.cancellationRecord.create({
+      if (refund && verifiedRefundAmount.gt(0)) {
+        await tx.refundRequest.create({
           data: {
             appointmentId,
-            amountPaid,
-            refundableAmount,
-            refundStatus: refundableAmount.gt(0) ? 'REFUND_PENDING' : 'NOT_APPLICABLE',
-            reason: reason || 'Business cancellation',
+            requestedAmount: verifiedRefundAmount,
+            status: 'PENDING',
+            reason: reason || 'Business user cancellation refund',
           }
         });
       }
@@ -737,7 +971,7 @@ export class AppointmentService {
           entityType: 'Appointment',
           entityId: appointmentId,
           oldValues: { status: appointment.status },
-          newValues: { status: AppointmentStatus.CANCELLED },
+          newValues: { status: AppointmentStatus.CANCELLED, refund, refundAmount: verifiedRefundAmount.toNumber() },
         },
         tx
       );
@@ -831,6 +1065,102 @@ export class AppointmentService {
           businessId,
           actorId: userId,
           action: 'APPOINTMENT_RESCHEDULED_BY_BUSINESS',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { scheduledStart: appointment.scheduledStart, scheduledEnd: appointment.scheduledEnd },
+          newValues: { scheduledStart: newStartTime, scheduledEnd: newEndTime },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
+  }
+
+  async rescheduleForCustomer(businessId: string, customerId: string, appointmentId: string, newStartTime: Date, reason?: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId, businessId, customerId },
+      include: { staff: true, service: true }
+    });
+
+    if (!appointment) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    if (['COMPLETED', 'CANCELLED', 'NO_SHOW', 'EXPIRED'].includes(appointment.status)) {
+      throw new ApiError(400, `Cannot reschedule an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const config = await prisma.branchBookingConfig.findUnique({ where: { branchId: appointment.branchId } });
+    if (!config || !config.reschedulingEnabled) {
+      throw new ApiError(400, 'Customer rescheduling is disabled for this branch.', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const staffId = appointment.staff[0]?.staffId;
+    if (!staffId) {
+      throw new ApiError(400, 'staffId is required for MVP', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const effectiveConfig = await availabilityService.resolveServiceBranchConfig(appointment.serviceId, appointment.branchId);
+    if (!effectiveConfig) {
+      throw new ApiError(400, 'Service configuration not found', ErrorCodes.VALIDATION_ERROR);
+    }
+    const newEndTime = new Date(newStartTime.getTime() + effectiveConfig.effectiveDurationMinutes * 60000);
+
+    const slotValidation = await availabilityService.validateSlot({
+      businessId,
+      branchId: appointment.branchId,
+      serviceId: appointment.serviceId,
+      staffId,
+      startTime: newStartTime.toISOString(),
+      source: 'PUBLIC',
+      excludeAppointmentId: appointmentId,
+    });
+    if (!slotValidation.valid) {
+      throw new ApiError(409, slotValidation.reason || 'Time slot conflicts with existing availability', ErrorCodes.CONFLICT);
+    }
+
+    await this.checkConflicts(prisma, {
+      branchId: appointment.branchId,
+      staffId: staffId,
+      scheduledStart: newStartTime,
+      scheduledEnd: newEndTime,
+      serviceId: appointment.serviceId,
+      excludeAppointmentId: appointmentId
+    });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          scheduledStart: newStartTime,
+          scheduledEnd: newEndTime
+        },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        }
+      });
+
+      await tx.appointmentStatusHistory.create({
+        data: {
+          appointmentId,
+          statusFrom: appointment.status,
+          statusTo: appointment.status,
+          actorId: customerId,
+          actorType: AppointmentActorType.USER,
+          reason: reason || 'Customer rescheduled',
+        }
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: customerId,
+          action: 'APPOINTMENT_RESCHEDULED_BY_CUSTOMER',
           entityType: 'Appointment',
           entityId: appointmentId,
           oldValues: { scheduledStart: appointment.scheduledStart, scheduledEnd: appointment.scheduledEnd },
@@ -975,7 +1305,7 @@ export class AppointmentService {
     return { membership, isOwnerOrAdmin, isBranchManager, isReceptionist, allowedBranchIds };
   }
 
-  private mapToResponse(appointment: any): any {
+  private mapToResponse(appointment: any, options?: { includeExtensions?: boolean }): any {
     return {
       id: appointment.id,
       businessId: appointment.businessId,
@@ -1030,6 +1360,24 @@ export class AppointmentService {
         createdAt: h.createdAt,
         actor: h.actor ? { id: h.actor.id, phone: h.actor.phone } : null,
       })) || [],
+      // Only surfaced when the caller actually loaded extensions, otherwise
+      // effectiveEnd would silently fall back to scheduledEnd and mislead clients.
+      ...(options?.includeExtensions
+        ? {
+            effectiveEnd: getEffectiveAppointmentEnd(appointment),
+            extensions: (appointment.extensions || []).map((e: any) => ({
+              id: e.id,
+              appointmentId: e.appointmentId,
+              staffId: e.staffId,
+              previousEndTime: e.previousEndTime,
+              extendedUntil: e.extendedUntil,
+              extensionMinutes: e.extensionMinutes,
+              reason: e.reason,
+              createdById: e.createdById,
+              createdAt: e.createdAt,
+            })),
+          }
+        : {}),
     };
   }
 

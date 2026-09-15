@@ -259,13 +259,32 @@ export class AppointmentController {
       const businessId = req.params.businessId;
       const appointmentId = req.params.appointmentId;
       const userId = req.auth!.userId;
-      const { reason } = req.body;
+      const { reason, refund, refundAmount } = req.body;
 
       const appointment = await appointmentService.cancelAppointment(
-        businessId, userId, appointmentId, reason
+        businessId, userId, appointmentId, refund === true, refundAmount, reason
       );
 
       res.json(successResponse('Appointment cancelled successfully', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Confirm attendance manually (staff action)
+   */
+  async confirmAttendance(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+
+      const appointment = await appointmentService.confirmAttendance(
+        appointmentId, businessId, userId
+      );
+
+      res.json(successResponse('Appointment attendance confirmed manually', appointment));
     } catch (error) {
       next(error);
     }
@@ -279,11 +298,41 @@ export class AppointmentController {
       const businessId = req.params.businessId;
       const appointmentId = req.params.appointmentId;
       const userId = req.auth!.userId;
-      const { status, reason } = req.body;
+      const { status, reason, actualEnd } = req.body;
 
-      const appointment = await appointmentService.transitionStatus(appointmentId, businessId, userId, status, reason);
+      const appointment = await appointmentService.transitionStatus(
+        appointmentId,
+        businessId,
+        userId,
+        status,
+        reason,
+        actualEnd ? new Date(actualEnd) : undefined
+      );
 
       res.json(successResponse('Appointment status updated successfully', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Extend an IN_PROGRESS appointment (service running longer than scheduled)
+   */
+  async extendAppointment(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { extensionMinutes, reason } = req.body;
+
+      const appointment = await appointmentService.extendAppointment(
+        businessId,
+        userId,
+        appointmentId,
+        { extensionMinutes, reason }
+      );
+
+      res.json(successResponse('Appointment extended successfully', appointment));
     } catch (error) {
       next(error);
     }

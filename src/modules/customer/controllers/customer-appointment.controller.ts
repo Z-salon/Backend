@@ -64,7 +64,7 @@ export class CustomerAppointmentController {
       });
       const data = schema.parse(req.body);
 
-      const result = await customerAppointmentService.cancelAppointment(userId, appointmentId, data.reason);
+      const result = await customerAppointmentService.cancelAppointmentByUserId(userId, appointmentId, data.reason);
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);

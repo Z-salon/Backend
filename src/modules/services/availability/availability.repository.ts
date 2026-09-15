@@ -1,6 +1,7 @@
 import { prisma } from '../../../libs/prisma';
 import { DateTime } from 'luxon';
 import { TimeInterval, createInterval } from './interval.utils';
+import { BUSY_APPOINTMENT_STATUSES, getAppointmentBusyWindow } from './appointment-busy-interval';
 
 export class AvailabilityRepository {
   async getBranchBookingConfig(branchId: string) {
@@ -202,8 +203,12 @@ export class AvailabilityRepository {
   }
 
   /**
-   * Returns blocking intervals (startTime, reservedEndTime)
-   * where status IN ('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS')
+   * Returns blocking intervals for a staff member on a date.
+   *
+   * The blocked range is derived from `getAppointmentBusyWindow`, so it honours
+   * operational extensions and early release (actual completion) — not just the
+   * originally scheduled start/end. The service buffer is applied once, to the
+   * effective end.
    */
   async getStaffBusyIntervalsFromAppointments(
     staffId: string,
@@ -220,7 +225,7 @@ export class AvailabilityRepository {
           some: { staffId },
         },
         status: {
-          in: ['PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'],
+          in: BUSY_APPOINTMENT_STATUSES,
         },
         scheduledStart: {
           lt: dayEnd,
@@ -236,25 +241,31 @@ export class AvailabilityRepository {
             branchAssignments: true,
           },
         },
+        // Latest extension decides the effective end. Extensions are monotonically
+        // increasing, so extendedUntil ordering is deterministic (unlike timestamps).
+        extensions: { orderBy: { extendedUntil: 'desc' }, take: 1 },
       },
     });
 
     const intervals: TimeInterval[] = [];
     for (const appt of appointments) {
-      let bufferMinutes = 0;
-      
       const branchAssignment = appt.service.branchAssignments.find(
         (ba) => ba.branchId === appt.branchId
       );
-      
-      if (branchAssignment && branchAssignment.bufferMinutes !== undefined) {
-        bufferMinutes = branchAssignment.bufferMinutes;
+
+      const bufferMinutes =
+        branchAssignment && branchAssignment.bufferMinutes !== undefined
+          ? branchAssignment.bufferMinutes
+          : 0;
+
+      const window = getAppointmentBusyWindow(appt, bufferMinutes);
+      const start = DateTime.fromJSDate(window.start).setZone(timezone);
+      const end = DateTime.fromJSDate(window.reservedEnd).setZone(timezone);
+
+      // Skip degenerate windows rather than throwing and blanking out availability.
+      if (start < end) {
+        intervals.push(createInterval(start, end));
       }
-
-      const start = DateTime.fromJSDate(appt.scheduledStart).setZone(timezone);
-      const end = DateTime.fromJSDate(appt.scheduledEnd).setZone(timezone).plus({ minutes: bufferMinutes });
-
-      intervals.push(createInterval(start, end));
     }
 
     return intervals;

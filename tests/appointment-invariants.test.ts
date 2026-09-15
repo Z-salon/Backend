@@ -57,8 +57,15 @@ function startAt(hour: number, minute = 0): Date {
 
 async function cleanup() {
   // Delete in correct order to avoid foreign key constraint violations
-  await prisma.appointmentPayment.deleteMany({ where: { appointment: { createdBy: { phone: { contains: TAG } } } } });
-  await prisma.appointmentPayment.deleteMany({ where: { recordedBy: { phone: { contains: TAG } } } });
+  // First delete appointment payments (both appointmentId and recordedById FKs)
+  await prisma.appointmentPayment.deleteMany({ 
+    where: { 
+      OR: [
+        { appointment: { createdBy: { phone: { contains: TAG } } } },
+        { recordedBy: { phone: { contains: TAG } } }
+      ] 
+    } 
+  });
   await prisma.appointmentStaff.deleteMany({ where: { appointment: { createdBy: { phone: { contains: TAG } } } } });
   await prisma.appointmentStatusHistory.deleteMany({ where: { appointment: { createdBy: { phone: { contains: TAG } } } } });
   await prisma.appointment.deleteMany({ where: { createdBy: { phone: { contains: TAG } } } });

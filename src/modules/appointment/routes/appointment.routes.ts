@@ -17,6 +17,7 @@ import {
   appointmentStaffBookingSchema,
   appointmentRescheduleSchema,
   appointmentServiceChangeSchema,
+  appointmentExtensionSchema,
 } from '../validation/appointment.schemas';
 
 const router = Router();
@@ -376,6 +377,78 @@ router.post(
 
 /**
  * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/confirm-attendance:
+ *   post:
+ *     tags: [Appointments]
+ *     summary: Staff manually confirms a customer's attendance
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Attendance confirmed successfully }
+ *       400: { description: Already confirmed }
+ *       401: { description: Authentication required }
+ *       403: { description: Business membership or access denied }
+ *       404: { description: Appointment not found }
+ */
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/confirm-attendance',
+  authenticate,
+  requireBusinessMembership,
+  appointmentController.confirmAttendance.bind(appointmentController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/extend:
+ *   post:
+ *     tags: [Appointments]
+ *     summary: Extend an IN_PROGRESS appointment
+ *     description: >
+ *       Records an operational extension for an appointment that is running longer
+ *       than scheduled. The service duration and the appointment's scheduledStart /
+ *       scheduledEnd are never modified; the extension only widens the effective busy
+ *       window used by availability, slot validation and conflict detection. Rejected
+ *       with 409 if it would overlap another appointment for the same staff member —
+ *       the conflicting appointment is never moved automatically.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [extensionMinutes]
+ *             properties:
+ *               extensionMinutes:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 480
+ *                 description: Minutes to extend by (typically 15, 30, 45 or 60)
+ *                 example: 30
+ *               reason: { type: string, maxLength: 500 }
+ *     responses:
+ *       200: { description: Appointment extended successfully }
+ *       400: { description: Appointment is not IN_PROGRESS, has no staff member, or invalid duration }
+ *       401: { description: Authentication required }
+ *       403: { description: Business membership or branch access denied }
+ *       404: { description: Appointment not found }
+ *       409: { description: Extension conflicts with another appointment for this staff member }
+ */
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/extend',
+  authenticate,
+  requireBusinessMembership,
+  bodyValidator(appointmentExtensionSchema),
+  appointmentController.extendAppointment.bind(appointmentController)
+);
+
+/**
+ * @openapi
  * /api/v1/businesses/{businessId}/appointments/{appointmentId}:
  *   patch:
  *     tags: [Appointments]
@@ -433,6 +506,13 @@ router.patch(
  *             properties:
  *               status: { type: string }
  *               reason: { type: string }
+ *               actualEnd:
+ *                 type: string
+ *                 format: date-time
+ *                 description: >
+ *                   Only for status COMPLETED. The actual finish time, which is stored
+ *                   as actualEnd and lets the staff member be released early. Defaults
+ *                   to now when omitted; scheduledStart/scheduledEnd are never changed.
  *     responses:
  *       200: { description: Appointment status updated successfully }
  *       400: { description: Invalid status transition }

@@ -1,4 +1,4 @@
-import jwt, { SignOptions } from 'jsonwebtoken';
+import jwt, { SignOptions, Secret } from 'jsonwebtoken';
 import { config } from '../config/env';
 
 export interface AccessTokenPayload {
@@ -13,7 +13,12 @@ export interface RefreshTokenPayload {
   type: 'refresh';
 }
 
-export type TokenPayload = AccessTokenPayload | RefreshTokenPayload;
+export interface CustomerActionTokenPayload {
+  sub: string; // appointmentId
+  type: 'customer_action';
+}
+
+export type TokenPayload = AccessTokenPayload | RefreshTokenPayload | CustomerActionTokenPayload;
 
 const accessSignOptions: SignOptions = {
   expiresIn: config.jwt.accessExpiresIn as SignOptions['expiresIn'],
@@ -41,6 +46,16 @@ export function generateRefreshToken(userId: string, sessionId: string): string 
   };
 
   return jwt.sign(payload, config.jwt.refreshSecret, refreshSignOptions);
+}
+
+export function generateCustomerActionToken(appointmentId: string, expiresIn: string = '7d'): string {
+  const payload: CustomerActionTokenPayload = {
+    sub: appointmentId,
+    type: 'customer_action',
+  };
+
+  const options: SignOptions = { expiresIn: expiresIn as SignOptions['expiresIn'] };
+  return jwt.sign(payload, config.jwt.accessSecret as Secret, options);
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {
@@ -78,6 +93,26 @@ export function verifyRefreshToken(token: string): RefreshTokenPayload {
     }
     if (error instanceof jwt.JsonWebTokenError) {
       throw new Error('INVALID_REFRESH_TOKEN');
+    }
+    throw error;
+  }
+}
+
+export function verifyCustomerActionToken(token: string): CustomerActionTokenPayload {
+  try {
+    const decoded = jwt.verify(token, config.jwt.accessSecret) as CustomerActionTokenPayload;
+    
+    if (decoded.type !== 'customer_action') {
+      throw new Error('Invalid token type');
+    }
+    
+    return decoded;
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new Error('ACTION_TOKEN_EXPIRED');
+    }
+    if (error instanceof jwt.JsonWebTokenError) {
+      throw new Error('INVALID_ACTION_TOKEN');
     }
     throw error;
   }

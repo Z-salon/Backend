@@ -102,4 +102,20 @@ export const appointmentStaffAssignSchema = z.object({
 export const appointmentStatusTransitionSchema = z.object({
   status: z.nativeEnum(AppointmentStatus, { required_error: 'Status is required' }),
   reason: z.string().max(500).optional(),
+  // Optional actual completion time (ISO 8601), used for early release when the
+  // service finished before the staff member gets to release the appointment.
+  actualEnd: z.string().datetime({ message: 'Invalid actualEnd datetime' }).optional(),
+});
+
+/**
+ * Operational extension of an IN_PROGRESS appointment.
+ * Typical values are 15/30/45/60 minutes; any positive whole number up to 480 is allowed.
+ */
+export const appointmentExtensionSchema = z.object({
+  extensionMinutes: z
+    .number({ invalid_type_error: 'extensionMinutes must be a number' })
+    .int('extensionMinutes must be a whole number of minutes')
+    .positive('extensionMinutes must be greater than zero')
+    .max(480, 'extensionMinutes cannot exceed 480'),
+  reason: z.string().max(500).optional(),
 });

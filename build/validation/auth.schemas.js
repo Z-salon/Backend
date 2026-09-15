@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.branchBookingConfigUpdateSchema = exports.branchDateOverrideUpdateSchema = exports.branchDateOverrideCreateSchema = exports.branchWeeklyHoursSchema = exports.branchUpdateSchema = exports.branchCreateSchema = exports.businessBrandingSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
+exports.branchPhoneUpdateSchema = exports.branchPhoneCreateSchema = exports.branchBookingConfigUpdateSchema = exports.branchDateOverrideUpdateSchema = exports.branchDateOverrideCreateSchema = exports.branchWeeklyHoursSchema = exports.branchUpdateSchema = exports.branchCreateSchema = exports.businessBrandingSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
 const zod_1 = require("zod");
 exports.phoneSchema = zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)');
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
@@ -283,6 +283,20 @@ exports.branchBookingConfigUpdateSchema = zod_1.z.object({
     reschedulingEnabled: zod_1.z.boolean().optional(),
     bookingBufferMinutes: zod_1.z.number().int().min(0).optional(),
     waitlistEnabled: zod_1.z.boolean().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided for update',
+});
+// Branch Phone schemas
+exports.branchPhoneCreateSchema = zod_1.z.object({
+    phoneNumber: zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)'),
+    label: zod_1.z.string().max(50).optional(),
+    isPrimary: zod_1.z.boolean().default(false),
+});
+exports.branchPhoneUpdateSchema = zod_1.z.object({
+    phoneNumber: zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)').optional(),
+    label: zod_1.z.string().max(50).nullable().optional(),
+    isPrimary: zod_1.z.boolean().optional(),
+    isActive: zod_1.z.boolean().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
     message: 'At least one field must be provided for update',
 });

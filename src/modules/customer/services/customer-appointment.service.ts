@@ -4,8 +4,26 @@ import { AppointmentStatus, AppointmentActorType, Prisma } from '@prisma/client'
 import { auditLogService } from '../../business/services/audit-log.service';
 import { availabilityService } from '../../services/availability/availability.service';
 import { appointmentService } from '../../appointment/services/appointment.service';
+import { sendAppointmentCancellationSms } from '../../auth/sms/sms.service';
 
 export class CustomerAppointmentService {
+  /**
+   * Best-effort SMS notification of a cancellation. Never fails the caller.
+   */
+  private async sendCancellationSms(customerId: string, scheduledStart: Date, reason?: string): Promise<void> {
+    try {
+      const customer = await prisma.customer.findUnique({
+        where: { id: customerId },
+        include: { phones: { where: { isPrimary: true }, take: 1 } },
+      });
+      const phone = customer?.phones[0]?.phone;
+      if (!phone) return;
+      await sendAppointmentCancellationSms(phone, scheduledStart, reason);
+    } catch (err) {
+      console.error('Failed to send appointment cancellation SMS', err);
+    }
+  }
+
   /**
    * Helper to find all customer IDs associated with the user's phone across all businesses.
    */
@@ -202,15 +220,31 @@ export class CustomerAppointmentService {
     return this.getCustomerAppointment(userId, appointmentId);
   }
 
-  async cancelAppointment(userId: string, appointmentId: string, reason?: string) {
+  /**
+   * Cancel an appointment by authenticated userId (looks up the customer automatically).
+   * Used by authenticated customer endpoints (POST /customer/appointments/:id/cancel).
+   */
+  async cancelAppointmentByUserId(userId: string, appointmentId: string, reason?: string) {
     const customerIds = await this.getCustomerIdsForUser(userId);
     if (customerIds.length === 0) throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
 
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: appointmentId },
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, customerId: { in: customerIds } },
     });
 
-    if (!appointment || !customerIds.includes(appointment.customerId)) {
+    if (!appointment) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    return this.cancelAppointment(appointment.businessId, appointment.customerId, appointmentId, reason);
+  }
+
+  async cancelAppointment(businessId: string, customerId: string, appointmentId: string, reason?: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId, businessId, customerId },
+    });
+
+    if (!appointment) {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
     }
 
@@ -225,6 +259,9 @@ export class CustomerAppointmentService {
 
     const now = new Date();
     const minutesToAppointment = (appointment.scheduledStart.getTime() - now.getTime()) / 60000;
+    const hoursToAppointment = minutesToAppointment / 60;
+    
+    // Existing cancellation window check
     if (minutesToAppointment < config.cancellationWindowMinutes) {
       throw new ApiError(400, `Cannot cancel within ${config.cancellationWindowMinutes} minutes of the appointment.`, ErrorCodes.VALIDATION_ERROR);
     }
@@ -238,10 +275,12 @@ export class CustomerAppointmentService {
 
     let refundableAmount = new Prisma.Decimal(0);
     if (amountPaid.gt(0)) {
-      if (config.refundPolicyType === 'FULL_REFUND') {
+      if (config.customerCancellationPolicy === 'ALWAYS') {
         refundableAmount = amountPaid;
-      } else if (config.refundPolicyType === 'PARTIAL_REFUND' && config.refundPercentage) {
-        refundableAmount = amountPaid.mul(config.refundPercentage).div(100);
+      } else if (config.customerCancellationPolicy === 'BEFORE_DEADLINE') {
+        if (hoursToAppointment >= config.refundDeadlineHours) {
+          refundableAmount = amountPaid;
+        }
       }
     }
 
@@ -259,19 +298,18 @@ export class CustomerAppointmentService {
           appointmentId,
           statusFrom: appointment.status,
           statusTo: AppointmentStatus.CANCELLED,
-          actorId: userId,
-          actorType: AppointmentActorType.USER,
+          actorId: customerId,
+          actorType: AppointmentActorType.USER, // Note: We might want a CUSTOMER type if one existed
           reason: reason || 'Customer cancelled',
         }
       });
 
-      if (amountPaid.gt(0)) {
-        await tx.cancellationRecord.create({
+      if (refundableAmount.gt(0)) {
+        await tx.refundRequest.create({
           data: {
             appointmentId,
-            amountPaid,
-            refundableAmount,
-            refundStatus: refundableAmount.gt(0) ? 'REFUND_PENDING' : 'NOT_APPLICABLE',
+            requestedAmount: refundableAmount,
+            status: 'PENDING',
             reason: reason || 'Customer cancellation',
           }
         });
@@ -280,7 +318,7 @@ export class CustomerAppointmentService {
       await auditLogService.createAuditLog(
         {
           businessId: appointment.businessId,
-          actorId: userId,
+          actorId: customerId,
           action: 'APPOINTMENT_CANCELLED_BY_CUSTOMER',
           entityType: 'Appointment',
           entityId: appointmentId,
@@ -291,10 +329,31 @@ export class CustomerAppointmentService {
       );
     });
 
-    // Send SMS (placeholder)
-    // await smsService.send(user.phone, "Your appointment has been cancelled.");
+    // Notify the customer (best-effort). This is the single notification point for
+    // both the authenticated cancel endpoint and the token-based confirmation link.
+    await this.sendCancellationSms(appointment.customerId, appointment.scheduledStart, reason);
 
-    return this.getCustomerAppointment(userId, appointmentId);
+    return await prisma.appointment.findUnique({ where: { id: appointmentId }});
+  }
+
+  async rescheduleCustomerAppointment(businessId: string, customerId: string, appointmentId: string, newStartTime: Date, reason?: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId, businessId, customerId },
+      include: { staff: true }
+    });
+
+    if (!appointment) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+    
+    // Pass execution to standard appointmentService reschedule (passing null for userId since it's the customer)
+    // Wait, appointmentService.rescheduleBusinessAppointment requires businessId, userId. 
+    // It calls `verifyAppointmentAccess(businessId, userId, appointment)` which requires the user to be a business member.
+    // For MVP phase 4, we will bypass the verifyAppointmentAccess because the customerId check above is sufficient authorization for the customer.
+    // We can do this by creating a specific reschedule path in AppointmentService or we just put the logic here.
+    // Given the complexity of checkConflicts, it's safer to use a new `rescheduleForCustomer` method in AppointmentService.
+    
+    return await appointmentService.rescheduleForCustomer(businessId, customerId, appointmentId, newStartTime, reason);
   }
 
   async getAppointmentHistory(userId: string, appointmentId: string) {

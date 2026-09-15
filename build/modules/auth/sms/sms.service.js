@@ -13,6 +13,11 @@ exports.getSmsProvider = getSmsProvider;
 exports.sendOtpSms = sendOtpSms;
 exports.sendInvitationLinkSms = sendInvitationLinkSms;
 exports.sendAppointmentConfirmationSms = sendAppointmentConfirmationSms;
+exports.sendConfirmationRequestSms = sendConfirmationRequestSms;
+exports.sendAppointmentCancellationSms = sendAppointmentCancellationSms;
+exports.sendRefundApprovedSms = sendRefundApprovedSms;
+exports.sendRefundRejectedSms = sendRefundRejectedSms;
+exports.buildConfirmationUrl = buildConfirmationUrl;
 const console_sms_provider_1 = require("./console-sms.provider");
 let smsProvider;
 function getSmsProvider() {
@@ -48,4 +53,39 @@ function sendAppointmentConfirmationSms(phone, scheduledStart, scheduledEnd) {
         const end = scheduledEnd.toISOString();
         yield provider.sendMessage(phone, `Your appointment is confirmed from ${start} to ${end}.`);
     });
+}
+function sendConfirmationRequestSms(phone, confirmationUrl, scheduledStart) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const start = scheduledStart.toLocaleString();
+        yield provider.sendMessage(phone, `Please confirm your appointment on ${start}. Confirm, reschedule, or cancel here: ${confirmationUrl}`);
+    });
+}
+function sendAppointmentCancellationSms(phone, scheduledStart, reason) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const start = scheduledStart.toLocaleString();
+        yield provider.sendMessage(phone, `Your appointment on ${start} has been cancelled.${reason ? ` Reason: ${reason}` : ''}`);
+    });
+}
+function sendRefundApprovedSms(phone, amount, scheduledStart) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const start = scheduledStart.toLocaleString();
+        yield provider.sendMessage(phone, `Your refund of ${amount} for the appointment on ${start} has been approved. You will receive it shortly.`);
+    });
+}
+function sendRefundRejectedSms(phone, scheduledStart, rejectionReason) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const start = scheduledStart.toLocaleString();
+        yield provider.sendMessage(phone, `Your refund request for the appointment on ${start} has been rejected.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`);
+    });
+}
+/**
+ * Generate the public customer-facing confirmation URL.
+ * The frontend uses this token when calling public appointment-confirmation APIs.
+ */
+function buildConfirmationUrl(frontendBaseUrl, token) {
+    return `${frontendBaseUrl}/appointments/confirm/${token}`;
 }

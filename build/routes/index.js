@@ -10,6 +10,8 @@ const member_routes_1 = __importDefault(require("../modules/business/routes/memb
 const role_routes_1 = __importDefault(require("../modules/role/routes/role.routes"));
 const business_configuration_routes_1 = __importDefault(require("../modules/business/routes/business-configuration.routes"));
 const branch_routes_1 = __importDefault(require("../modules/business/routes/branch.routes"));
+const branch_phone_routes_1 = __importDefault(require("../modules/business/routes/branch-phone.routes"));
+const batch_create_routes_1 = __importDefault(require("../modules/business/routes/batch-create.routes"));
 const service_category_routes_1 = __importDefault(require("../modules/services/routes/service-category.routes"));
 const service_routes_1 = __importDefault(require("../modules/services/routes/service.routes"));
 const staff_routes_1 = __importDefault(require("../modules/staff/routes/staff.routes"));
@@ -18,21 +20,28 @@ const availability_routes_1 = __importDefault(require("../modules/services/route
 const appointment_routes_1 = __importDefault(require("../modules/appointment/routes/appointment.routes"));
 const customer_appointment_routes_1 = __importDefault(require("../modules/customer/routes/customer-appointment.routes"));
 const public_booking_routes_1 = __importDefault(require("../modules/appointment/routes/public-booking.routes"));
+const customer_confirmation_routes_1 = __importDefault(require("../modules/appointment/routes/customer-confirmation.routes"));
+const refund_request_routes_1 = __importDefault(require("../modules/payment/routes/refund-request.routes"));
+const env_1 = require("../config/env");
 const router = (0, express_1.Router)();
-router.use(`/auth`, auth_routes_1.default);
-router.use(`/`, invitation_routes_1.default);
-router.use(`/`, member_routes_1.default);
-router.use(`/`, role_routes_1.default);
-router.use(`/`, business_configuration_routes_1.default);
-router.use(`/`, branch_routes_1.default);
-router.use(`/`, service_category_routes_1.default);
-router.use(`/`, service_routes_1.default);
-router.use(`/`, staff_routes_1.default);
-router.use(`/`, customer_routes_1.default);
-router.use(`/`, availability_routes_1.default);
-router.use(`/`, appointment_routes_1.default);
-router.use(`/customer`, customer_appointment_routes_1.default);
-router.use(`/public`, public_booking_routes_1.default);
+router.use(`${env_1.config.apiPrefix}/auth`, auth_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, invitation_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, member_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, role_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, business_configuration_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, branch_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, branch_phone_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, batch_create_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, service_category_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, service_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, staff_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, customer_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, availability_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, appointment_routes_1.default);
+router.use(`${env_1.config.apiPrefix}/customer`, customer_appointment_routes_1.default);
+router.use(`${env_1.config.apiPrefix}/public`, public_booking_routes_1.default);
+router.use(`${env_1.config.apiPrefix}/public`, customer_confirmation_routes_1.default);
+router.use(`${env_1.config.apiPrefix}`, refund_request_routes_1.default);
 /**
  * @openapi
  * /health:

@@ -125,7 +125,6 @@ model User {
   staffProfiles            Staff[]
   createdCustomers         Customer[]                 @relation("CustomerCreatedBy")
   createdAppointments      Appointment[]              @relation("AppointmentCreatedBy")
-  createdExtensions        AppointmentExtension[]     @relation("AppointmentExtensionCreatedBy")
   appointmentStatusHistory AppointmentStatusHistory[] @relation("AppointmentStatusActor")
   reviewedReceipts         PaymentReceipt[]           @relation("ReceiptReviewedBy")
   recordedServiceUsages    ServiceUsage[]             @relation("ServiceUsageRecordedBy")
@@ -211,28 +210,9 @@ model Branch {
   paymentReceipts     PaymentReceipt[]
   serviceUsages       ServiceUsage[]
   appointmentPayments AppointmentPayment[]
-  phones              BranchPhone[]
 
   @@unique([businessId, name])
   @@index([businessId])
-  @@index([isActive])
-}
-
-model BranchPhone {
-  id           String   @id @default(uuid())
-  branchId     String
-  phoneNumber  String
-  label        String?
-  isPrimary    Boolean  @default(false)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  branch       Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-
-  @@unique([branchId, phoneNumber])
-  @@unique([branchId, isPrimary])
-  @@index([branchId])
   @@index([isActive])
 }
 
@@ -674,7 +654,6 @@ model Staff {
   breakOverrides         StaffBreakOverride[]
   timeOffs               StaffTimeOff[]
   appointments           AppointmentStaff[]
-  appointmentExtensions  AppointmentExtension[]
 
   @@index([businessId])
   @@index([branchId])
@@ -936,7 +915,6 @@ model Appointment {
   confirmedBy        User?                      @relation("AppointmentConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
   staff              AppointmentStaff[]
   statusHistory      AppointmentStatusHistory[]
-  extensions         AppointmentExtension[]
   refundRequest      RefundRequest?
   serviceUsages      ServiceUsage[]
   paymentReceipts    PaymentReceipt[]
@@ -964,29 +942,6 @@ model AppointmentStaff {
   @@unique([appointmentId, staffId])
   @@index([appointmentId])
   @@index([staffId])
-}
-
-/// Operational extension of an appointment that is running longer than scheduled.
-/// The appointment's scheduledStart/scheduledEnd are never modified; the latest
-/// extension's extendedUntil determines the effective busy end for availability.
-model AppointmentExtension {
-  id               String   @id @default(uuid())
-  appointmentId    String
-  staffId          String
-  previousEndTime  DateTime
-  extendedUntil    DateTime
-  extensionMinutes Int
-  reason           String?
-  createdById      String?
-  createdAt        DateTime @default(now())
-
-  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  staff       Staff       @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  createdBy   User?       @relation("AppointmentExtensionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-
-  @@index([appointmentId])
-  @@index([staffId])
-  @@index([appointmentId, createdAt])
 }
 
 model AppointmentStatusHistory {

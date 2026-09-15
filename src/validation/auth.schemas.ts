@@ -321,3 +321,19 @@ export const branchBookingConfigUpdateSchema = z.object({
 }).strict().refine(data => Object.keys(data).length > 0, {
   message: 'At least one field must be provided for update',
 });
+
+// Branch Phone schemas
+export const branchPhoneCreateSchema = z.object({
+  phoneNumber: z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)'),
+  label: z.string().max(50).optional(),
+  isPrimary: z.boolean().default(false),
+});
+
+export const branchPhoneUpdateSchema = z.object({
+  phoneNumber: z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)').optional(),
+  label: z.string().max(50).nullable().optional(),
+  isPrimary: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+}).strict().refine(data => Object.keys(data).length > 0, {
+  message: 'At least one field must be provided for update',
+});
