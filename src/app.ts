@@ -44,7 +44,7 @@ export async function startServer(): Promise<void> {
   // await registerScheduledJobs();
   
   return new Promise<void>((resolve, reject) => {
-    const server = app.listen(config.port, '127.0.0.1', () => {
+    const server = app.listen(config.port, '0.0.0.0', () => {
       console.log(`🚀 Server running on port ${config.port} in ${config.nodeEnv} mode`);
       console.log(`📚 API available at http://localhost:${config.port}${config.apiPrefix}`);
       console.log(`📖 Swagger docs available at http://localhost:${config.port}/docs`);
