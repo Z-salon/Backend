@@ -5,7 +5,7 @@
   "main": "build/server.js",
   "scripts": {
     "start:dev": "npx nodemon",
-    "build": "rimraf ./build && tsc",
+    "build": "tsc -p tsconfig.json",
     "start": "npm run build && node build/server.js",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
