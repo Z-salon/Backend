@@ -93,6 +93,29 @@ export class ServiceCategoryController {
       next(error);
     }
   }
+
+  async addSampleWork(req: Request, res: Response, next: NextFunction) {
+    try {
+      const categoryId = req.params.categoryId;
+      const userId = req.auth!.userId;
+      const input = req.body;
+      const result = await serviceCategoryService.addSampleWork(categoryId, userId, input);
+      res.status(201).json(successResponse('Sample work added successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async removeSampleWork(req: Request, res: Response, next: NextFunction) {
+    try {
+      const sampleWorkId = req.params.sampleWorkId;
+      const userId = req.auth!.userId;
+      await serviceCategoryService.removeSampleWork(sampleWorkId, userId);
+      res.status(200).json(successResponse('Sample work removed successfully', {}));
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const serviceCategoryController = new ServiceCategoryController();

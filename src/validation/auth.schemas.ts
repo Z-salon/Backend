@@ -155,9 +155,6 @@ export const businessBrandingSchema = z.object({
   secondaryColor: z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #00FF00)').nullable().optional(),
   description: z.string().max(1000).nullable().optional(),
   aboutUs: z.string().max(5000).nullable().optional(),
-  address: z.string().max(500).nullable().optional(),
-  phone: z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)').nullable().optional(),
-  email: z.string().email().nullable().optional(),
   website: z.string().url().nullable().optional(),
   facebookUrl: z.string().url().nullable().optional(),
   instagramUrl: z.string().url().nullable().optional(),
@@ -309,17 +306,33 @@ export const branchDateOverrideUpdateSchema = z.object({
 });
 
 export const branchBookingConfigUpdateSchema = z.object({
-  onlineBookingEnabled: z.boolean().optional(),
-  walkInEnabled: z.boolean().optional(),
-  bookingApprovalRequired: z.boolean().optional(),
-  minimumAdvanceBookingMinutes: z.number().int().min(0).optional(),
-  maximumAdvanceBookingDays: z.number().int().min(1).optional(),
-  cancellationWindowMinutes: z.number().int().min(0).optional(),
-  reschedulingEnabled: z.boolean().optional(),
-  bookingBufferMinutes: z.number().int().min(0).optional(),
-  waitlistEnabled: z.boolean().optional(),
+  booking: z.object({
+    onlineBookingEnabled: z.boolean().optional(),
+    walkInEnabled: z.boolean().optional(),
+    bookingApprovalRequired: z.boolean().optional(),
+    minimumAdvanceBookingMinutes: z.number().int().min(0).optional(),
+    maximumAdvanceBookingDays: z.number().int().min(1).optional(),
+    bookingBufferMinutes: z.number().int().min(0).optional(),
+    waitlistEnabled: z.boolean().optional(),
+  }).optional(),
+  cancellation: z.object({
+    cancellationWindowMinutes: z.number().int().min(0).optional(),
+    reschedulingEnabled: z.boolean().optional(),
+    customerCancellationEnabled: z.boolean().optional(),
+    customerCancellationPolicy: z.string().optional(),
+    refundPolicyType: z.enum(['NO_REFUND', 'FULL_REFUND', 'PERCENTAGE_REFUND']).optional(),
+    refundPercentage: z.number().int().min(0).max(100).nullable().optional(),
+    refundDeadlineHours: z.number().int().min(0).optional(),
+  }).optional(),
+  confirmation: z.object({
+    customerConfirmationEnabled: z.boolean().optional(),
+    confirmationReminderHours: z.number().int().min(0).optional(),
+    confirmationDeadlineHours: z.number().int().min(0).optional(),
+    sameDayConfirmationReminderHours: z.number().int().min(0).optional(),
+    pendingAppointmentExpirationMinutes: z.number().int().min(0).optional(),
+  }).optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
-  message: 'At least one field must be provided for update',
+  message: 'At least one section must be provided for update',
 });
 
 // Branch Phone schemas

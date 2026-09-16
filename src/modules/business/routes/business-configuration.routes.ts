@@ -87,6 +87,27 @@ router.patch(
 /**
  * @openapi
  * /api/v1/businesses/{businessId}/branding:
+ *   get:
+ *     tags: [Business Configuration]
+ *     summary: Get business branding and branches
+ *     parameters:
+ *       - in: path
+ *         name: businessId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Business branding retrieved successfully
+ */
+router.get(
+  '/businesses/:businessId/branding',
+  businessConfigurationController.getBranding.bind(businessConfigurationController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/branding:
  *   patch:
  *     tags: [Business Configuration]
  *     summary: Update business branding and public information

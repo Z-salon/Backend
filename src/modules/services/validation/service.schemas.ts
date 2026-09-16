@@ -24,6 +24,12 @@ export const updateCategoryBranchAssignmentSchema = z.object({
   isActive: z.boolean({ required_error: 'isActive is required' }),
 });
 
+export const createSampleWorkSchema = z.object({
+  name: z.string({ required_error: 'Name is required' }).min(1).max(250).trim(),
+  url: z.string({ required_error: 'URL is required' }).url('Invalid URL'),
+  description: z.string().max(1000).optional(),
+});
+
 export const createServiceSchema = z.object({
   categoryId: z.string({ required_error: 'Category ID is required' }).uuid('Invalid category ID'),
   name: z.string({ required_error: 'Service name is required' }).min(1, 'Service name cannot be empty').max(250).trim(),

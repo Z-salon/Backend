@@ -8,6 +8,7 @@ import {
   updateServiceCategorySchema,
   assignCategoryBranchSchema,
   updateCategoryBranchAssignmentSchema,
+  createSampleWorkSchema,
 } from '../validation/service.schemas';
 
 const router = Router();
@@ -206,6 +207,60 @@ router.patch(
   authenticate,
   bodyValidator(updateCategoryBranchAssignmentSchema),
   serviceCategoryController.updateCategoryBranchAssignment
+);
+
+// Sample Works routes
+/**
+ * @openapi
+ * /api/v1/service-categories/{categoryId}/sample-works:
+ *   post:
+ *     tags: [Service Categories]
+ *     summary: Add a sample work to a category
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: categoryId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, url]
+ *             properties:
+ *               name: { type: string }
+ *               url: { type: string, format: uri }
+ *               description: { type: string, nullable: true }
+ *     responses:
+ *       201: { description: Sample work added successfully }
+ *       400: { description: Invalid input }
+ *       401: { description: Authentication required }
+ *       404: { description: Service category not found }
+ */
+router.post(
+  '/service-categories/:categoryId/sample-works',
+  authenticate,
+  bodyValidator(createSampleWorkSchema),
+  serviceCategoryController.addSampleWork.bind(serviceCategoryController)
+);
+
+/**
+ * @openapi
+ * /api/v1/sample-works/{sampleWorkId}:
+ *   delete:
+ *     tags: [Service Categories]
+ *     summary: Remove a sample work
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: sampleWorkId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Sample work removed successfully }
+ *       401: { description: Authentication required }
+ *       404: { description: Sample work not found }
+ */
+router.delete(
+  '/sample-works/:sampleWorkId',
+  authenticate,
+  serviceCategoryController.removeSampleWork.bind(serviceCategoryController)
 );
 
 export default router;

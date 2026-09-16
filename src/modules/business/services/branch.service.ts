@@ -36,15 +36,31 @@ export interface DateOverrideUpdateInput {
 }
 
 export interface BookingConfigUpdateInput {
-  onlineBookingEnabled?: boolean;
-  walkInEnabled?: boolean;
-  bookingApprovalRequired?: boolean;
-  minimumAdvanceBookingMinutes?: number;
-  maximumAdvanceBookingDays?: number;
-  cancellationWindowMinutes?: number;
-  reschedulingEnabled?: boolean;
-  bookingBufferMinutes?: number;
-  waitlistEnabled?: boolean;
+  booking?: {
+    onlineBookingEnabled?: boolean;
+    walkInEnabled?: boolean;
+    bookingApprovalRequired?: boolean;
+    minimumAdvanceBookingMinutes?: number;
+    maximumAdvanceBookingDays?: number;
+    bookingBufferMinutes?: number;
+    waitlistEnabled?: boolean;
+  };
+  cancellation?: {
+    cancellationWindowMinutes?: number;
+    reschedulingEnabled?: boolean;
+    customerCancellationEnabled?: boolean;
+    customerCancellationPolicy?: string;
+    refundPolicyType?: 'NO_REFUND' | 'FULL_REFUND' | 'PERCENTAGE_REFUND';
+    refundPercentage?: number | null;
+    refundDeadlineHours?: number;
+  };
+  confirmation?: {
+    customerConfirmationEnabled?: boolean;
+    confirmationReminderHours?: number;
+    confirmationDeadlineHours?: number;
+    sameDayConfirmationReminderHours?: number;
+    pendingAppointmentExpirationMinutes?: number;
+  };
 }
 
 export interface BranchResponse {
@@ -52,8 +68,16 @@ export interface BranchResponse {
   businessId: string;
   name: string;
   address: string | null;
+  email: string | null;
   timezone: string;
   isActive: boolean;
+  phones?: Array<{
+    id: string;
+    phone: string;
+    label: string | null;
+    isPrimary: boolean;
+    isActive: boolean;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -199,6 +223,7 @@ export class BranchService {
         },
         bookingConfig: true,
         business: true,
+        phones: true,
       },
     });
 
@@ -702,7 +727,37 @@ export class BranchService {
       });
     }
 
-    return config;
+    return this.mapBookingConfigToResponse(config);
+  }
+
+  private mapBookingConfigToResponse(config: any) {
+    return {
+      booking: {
+        onlineBookingEnabled: config.onlineBookingEnabled,
+        walkInEnabled: config.walkInEnabled,
+        bookingApprovalRequired: config.bookingApprovalRequired,
+        minimumAdvanceBookingMinutes: config.minimumAdvanceBookingMinutes,
+        maximumAdvanceBookingDays: config.maximumAdvanceBookingDays,
+        bookingBufferMinutes: config.bookingBufferMinutes,
+        waitlistEnabled: config.waitlistEnabled,
+      },
+      cancellation: {
+        cancellationWindowMinutes: config.cancellationWindowMinutes,
+        reschedulingEnabled: config.reschedulingEnabled,
+        customerCancellationEnabled: config.customerCancellationEnabled,
+        customerCancellationPolicy: config.customerCancellationPolicy,
+        refundPolicyType: config.refundPolicyType,
+        refundPercentage: config.refundPercentage,
+        refundDeadlineHours: config.refundDeadlineHours,
+      },
+      confirmation: {
+        customerConfirmationEnabled: config.customerConfirmationEnabled,
+        confirmationReminderHours: config.confirmationReminderHours,
+        confirmationDeadlineHours: config.confirmationDeadlineHours,
+        sameDayConfirmationReminderHours: config.sameDayConfirmationReminderHours,
+        pendingAppointmentExpirationMinutes: config.pendingAppointmentExpirationMinutes,
+      }
+    };
   }
 
   async updateBookingConfig(
@@ -731,8 +786,14 @@ export class BranchService {
     const changes: Record<string, any> = {};
     const oldValues: Record<string, any> = {};
 
-    for (const field of Object.keys(input)) {
-      const value = (input as any)[field];
+    // Flatten nested input
+    const flatInput: Record<string, any> = {};
+    if (input.booking) Object.assign(flatInput, input.booking);
+    if (input.cancellation) Object.assign(flatInput, input.cancellation);
+    if (input.confirmation) Object.assign(flatInput, input.confirmation);
+
+    for (const field of Object.keys(flatInput)) {
+      const value = flatInput[field];
       if (value !== undefined && value !== (config as any)[field]) {
         changes[field] = value;
         oldValues[field] = (config as any)[field];
@@ -740,7 +801,7 @@ export class BranchService {
     }
 
     if (Object.keys(changes).length === 0) {
-      return config;
+      return this.mapBookingConfigToResponse(config);
     }
 
     if (changes.minimumAdvanceBookingMinutes !== undefined && changes.minimumAdvanceBookingMinutes < 0) {
@@ -780,7 +841,7 @@ export class BranchService {
       return updated;
     });
 
-    return updated;
+    return this.mapBookingConfigToResponse(updated);
   }
 
   private async verifyMembershipAndPermission(
@@ -907,8 +968,18 @@ export class BranchService {
       businessId: branch.businessId,
       name: branch.name,
       address: branch.address ?? null,
+      email: branch.email ?? null,
       timezone: branch.timezone,
       isActive: branch.isActive,
+      ...(branch.phones ? {
+        phones: branch.phones.map((p: any) => ({
+          id: p.id,
+          phone: p.phoneNumber,
+          label: p.label,
+          isPrimary: p.isPrimary,
+          isActive: p.isActive
+        }))
+      } : { phones: [] }),
       createdAt: branch.createdAt,
       updatedAt: branch.updatedAt,
     };

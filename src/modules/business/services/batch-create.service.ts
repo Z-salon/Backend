@@ -8,7 +8,13 @@ export interface BranchBatchCreateInput {
   items: Array<{
     name: string;
     address: string;
+    email?: string;
     timezone?: string;
+    phones?: Array<{
+      phone: string;
+      label?: string;
+      isPrimary: boolean;
+    }>;
   }>;
 }
 
@@ -109,27 +115,36 @@ export class BatchCreateService {
     }
 
     const branches = await prisma.$transaction(async (tx) => {
-      const created = await tx.branch.createMany({
-        data: input.items.map(item => ({
-          businessId,
-          name: item.name,
-          address: item.address,
-          timezone: item.timezone || business.timezone,
-          isActive: true,
-        })),
-        skipDuplicates: false,
-      });
-
-      // Get created branches to create booking configs
-      const createdBranches = await tx.branch.findMany({
-        where: { businessId, name: { in: Array.from(branchNames) } },
-        select: { id: true, name: true, address: true, timezone: true, isActive: true, createdAt: true, updatedAt: true },
-      });
-
-      await tx.branchBookingConfig.createMany({
-        data: createdBranches.map(b => ({ branchId: b.id })),
-        skipDuplicates: true,
-      });
+      const createdBranches = [];
+      
+      for (const item of input.items) {
+        const branch = await tx.branch.create({
+          data: {
+            businessId,
+            name: item.name,
+            address: item.address,
+            email: item.email || null,
+            timezone: item.timezone || business.timezone,
+            isActive: true,
+            bookingConfig: {
+              create: {}
+            },
+            ...(item.phones && item.phones.length > 0 ? {
+              phones: {
+                create: item.phones.map(p => ({
+                  phoneNumber: normalizePhone(p.phone),
+                  label: p.label,
+                  isPrimary: p.isPrimary
+                }))
+              }
+            } : {})
+          },
+          include: {
+            phones: true
+          }
+        });
+        createdBranches.push(branch);
+      }
 
       // Audit log
       await auditLogService.createAuditLog({

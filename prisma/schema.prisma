@@ -193,6 +193,7 @@ model Branch {
   businessId String
   name       String
   address    String?
+  email      String?
   timezone   String
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
@@ -570,10 +571,26 @@ model ServiceCategory {
   services            Service[]
   branchAssignments   ServiceCategoryBranchAssignment[]
   staffQualifications StaffCategoryQualification[]
+  sampleWorks         ServiceCategorySampleWork[]
 
   @@unique([businessId, name])
   @@index([businessId])
   @@index([status])
+}
+
+model ServiceCategorySampleWork {
+  id          String   @id @default(uuid())
+  categoryId  String
+  name        String
+  description String?
+  url         String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category    ServiceCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
 }
 
 model ServiceCategoryBranchAssignment {

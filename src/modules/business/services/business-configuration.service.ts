@@ -79,7 +79,16 @@ export class BusinessConfigurationService {
         status: 'ACTIVE',
       },
       include: {
-        business: true,
+        business: {
+          include: {
+            branches: {
+              where: { isActive: true },
+              orderBy: { createdAt: 'asc' },
+              take: 1,
+              include: { phones: true },
+            }
+          }
+        },
         userRoles: {
           include: {
             role: true,
@@ -170,6 +179,68 @@ export class BusinessConfigurationService {
     });
 
     return this.mapBusinessToResponse(updatedBusiness);
+  }
+
+  async getBranding(businessId: string): Promise<any> {
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        branches: {
+          where: { isActive: true },
+          include: { phones: true }
+        },
+        serviceCategories: {
+          where: { status: 'ACTIVE' },
+          include: {
+            sampleWorks: true
+          }
+        }
+      }
+    });
+
+    if (!business) {
+      throw new ApiError(404, 'Business not found', ErrorCodes.BUSINESS_NOT_FOUND);
+    }
+
+    return {
+      logoUrl: business.logoUrl ?? null,
+      coverImageUrl: business.coverImageUrl ?? null,
+      primaryColor: business.primaryColor ?? null,
+      secondaryColor: business.secondaryColor ?? null,
+      description: business.description ?? null,
+      aboutUs: business.aboutUs ?? null,
+      website: business.website ?? null,
+      facebookUrl: business.facebookUrl ?? null,
+      instagramUrl: business.instagramUrl ?? null,
+      telegramUrl: business.telegramUrl ?? null,
+      tiktokUrl: business.tiktokUrl ?? null,
+      branches: business.branches.map((b: any) => ({
+        id: b.id,
+        name: b.name,
+        address: b.address ?? null,
+        email: b.email ?? null,
+        timezone: b.timezone,
+        phones: b.phones.map((p: any) => ({
+          id: p.id,
+          phone: p.phoneNumber,
+          label: p.label,
+          isPrimary: p.isPrimary,
+          isActive: p.isActive
+        }))
+      })),
+      serviceCategories: business.serviceCategories.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        sampleWorks: c.sampleWorks.map((sw: any) => ({
+          id: sw.id,
+          url: sw.url,
+          name: sw.name,
+          description: sw.description,
+          serviceCategoryId: sw.categoryId
+        }))
+      }))
+    };
   }
 
   async updateBranding(
@@ -356,7 +427,7 @@ export class BusinessConfigurationService {
     }
   }
 
-  private mapBusinessToResponse(business: any): BusinessResponse {
+  private mapBusinessToResponse(business: any): any {
     return {
       id: business.id,
       name: business.name,
@@ -364,20 +435,32 @@ export class BusinessConfigurationService {
       currency: business.currency,
       timezone: business.timezone,
       status: business.status,
-      logoUrl: business.logoUrl ?? null,
-      coverImageUrl: business.coverImageUrl ?? null,
-      primaryColor: business.primaryColor ?? null,
-      secondaryColor: business.secondaryColor ?? null,
-      description: business.description ?? null,
-      aboutUs: business.aboutUs ?? null,
-      address: business.address ?? null,
-      phone: business.phone ?? null,
-      email: business.email ?? null,
-      website: business.website ?? null,
-      facebookUrl: business.facebookUrl ?? null,
-      instagramUrl: business.instagramUrl ?? null,
-      telegramUrl: business.telegramUrl ?? null,
-      tiktokUrl: business.tiktokUrl ?? null,
+      // Provide branch information if loaded
+      ...(business.branches && business.branches.length > 0 ? {
+        branch: {
+          id: business.branches[0].id,
+          name: business.branches[0].name,
+          address: business.branches[0].address ?? null,
+          email: business.branches[0].email ?? null,
+          timezone: business.branches[0].timezone,
+          phones: business.branches[0].phones.map((p: any) => ({
+            id: p.id,
+            phone: p.phoneNumber,
+            label: p.label,
+            isPrimary: p.isPrimary,
+            isActive: p.isActive
+          }))
+        }
+      } : {
+        branch: {
+          id: '',
+          name: 'Main Branch',
+          address: null,
+          email: null,
+          timezone: business.timezone,
+          phones: []
+        }
+      }),
       createdAt: business.createdAt,
       updatedAt: business.updatedAt,
     };

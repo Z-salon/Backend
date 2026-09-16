@@ -18,6 +18,12 @@ export interface UpdateServiceCategoryInput {
   status?: ServiceCategoryStatus;
 }
 
+export interface CreateSampleWorkInput {
+  name: string;
+  url: string;
+  description?: string;
+}
+
 export class ServiceCategoryService {
   private async getMembershipAndUserRoles(businessId: string, userId: string) {
     const membership = await prisma.businessMember.findFirst({
@@ -430,6 +436,73 @@ export class ServiceCategoryService {
     });
 
     return updated;
+  }
+
+  async addSampleWork(
+    categoryId: string,
+    userId: string,
+    input: CreateSampleWorkInput
+  ) {
+    const category = await prisma.serviceCategory.findUnique({
+      where: { id: categoryId },
+    });
+
+    if (!category) {
+      throw new ApiError(404, 'Service category not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyOwnerOrAdmin(category.businessId, userId);
+
+    const sampleWork = await prisma.serviceCategorySampleWork.create({
+      data: {
+        categoryId,
+        name: input.name,
+        url: input.url,
+        description: input.description,
+      },
+    });
+
+    await auditLogService.createAuditLog({
+      businessId: category.businessId,
+      actorId: userId,
+      action: 'SAMPLE_WORK_ADDED',
+      entityType: 'ServiceCategorySampleWork',
+      entityId: sampleWork.id,
+      newValues: { categoryId, name: input.name, url: input.url, description: input.description },
+    });
+
+    return sampleWork;
+  }
+
+  async removeSampleWork(
+    sampleWorkId: string,
+    userId: string
+  ) {
+    const sampleWork = await prisma.serviceCategorySampleWork.findUnique({
+      where: { id: sampleWorkId },
+      include: { category: true },
+    });
+
+    if (!sampleWork) {
+      throw new ApiError(404, 'Sample work not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyOwnerOrAdmin(sampleWork.category.businessId, userId);
+
+    await prisma.serviceCategorySampleWork.delete({
+      where: { id: sampleWorkId },
+    });
+
+    await auditLogService.createAuditLog({
+      businessId: sampleWork.category.businessId,
+      actorId: userId,
+      action: 'SAMPLE_WORK_REMOVED',
+      entityType: 'ServiceCategorySampleWork',
+      entityId: sampleWorkId,
+      oldValues: { name: sampleWork.name, url: sampleWork.url, description: sampleWork.description },
+    });
+
+    return { success: true };
   }
 }
 

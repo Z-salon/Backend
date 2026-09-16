@@ -36,6 +36,16 @@ export class BusinessConfigurationController {
     }
   }
 
+  async getBranding(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { businessId } = req.params;
+      const branding = await businessConfigurationService.getBranding(businessId);
+      res.json(successResponse('Business branding retrieved', branding));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateBranding(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.auth) {
