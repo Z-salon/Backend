@@ -40,9 +40,9 @@ export class AuthController {
     try {
       const { phone, password, business } = req.body;
 
-      await authService.register({ phone, password, business });
+     const { otp } = await authService.register({ phone, password, business });
 
-      res.status(201).json(successResponse('If this phone number is eligible, a verification code has been sent.'));
+      res.status(201).json(successResponse('If this phone number is eligible, a verification code has been sent.', { otp }));
     } catch (error) {
       next(error);
     }
@@ -53,9 +53,9 @@ export class AuthController {
       const { password } = req.body;
       const { invitationToken } = req.params;
 
-      await authService.registerInvitation(invitationToken, { password });
+      const { otp } = await authService.registerInvitation(invitationToken, { password });
 
-      res.status(201).json(successResponse('If this phone number is eligible, a verification code has been sent.'));
+      res.status(201).json(successResponse('If this phone number is eligible, a verification code has been sent.', { otp }));
     } catch (error) {
       next(error);
     }

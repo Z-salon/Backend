@@ -28,7 +28,7 @@ export interface AuthResult {
 }
 
 export class AuthService {
-  async register(data: RegisterData): Promise<void> {
+  async register(data: RegisterData): Promise<{ otp: string }> {
     const normalizedPhone = normalizePhone(data.phone);
 
     const existingUser = await prisma.user.findUnique({
@@ -62,7 +62,9 @@ export class AuthService {
       },
     });
 
-    await otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+   const { otp } = await otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+
+   return { otp };
   }
 
 async registerInvitation(
@@ -73,6 +75,7 @@ async registerInvitation(
 ): Promise<{
   message: string;
   phone: string;
+  otp: string;
 }> {
 
   // ============================================================
@@ -326,7 +329,7 @@ async registerInvitation(
   // 12. Request OTP
   // ============================================================
 
-  await otpService.requestOtp(
+  const { otp } = await otpService.requestOtp(
     normalizedPhone,
     'PHONE_VERIFICATION'
   );
@@ -343,6 +346,8 @@ async registerInvitation(
 
     phone:
       normalizedPhone,
+
+    otp: otp,
 
   };
 
