@@ -13,10 +13,11 @@ export class AuthController {
       const ip = req.ip || req.socket.remoteAddress;
       const userAgent = req.get('user-agent');
 
-      await otpService.requestOtp(phone, purpose, ip, userAgent);
+      const { otp } = await otpService.requestOtp(phone, purpose, ip, userAgent);
 
       res.json(successResponse(
-        'If this phone number is eligible, a verification code has been sent.'
+        'If this phone number is eligible, a verification code has been sent.',
+        { otp }
       ));
     } catch (error) {
       next(error);
@@ -228,8 +229,8 @@ export class AuthController {
       const ip = req.ip || req.socket.remoteAddress;
       const userAgent = req.get('user-agent');
 
-      await otpService.requestOtp(phone, purpose, ip, userAgent);
-      res.json(successResponse('If this phone number is eligible, a verification code has been sent.'));
+      const { otp } = await otpService.requestOtp(phone, purpose, ip, userAgent);
+      res.json(successResponse('If this phone number is eligible, a verification code has been sent.', { otp }));
     } catch (error) {
       next(error);
     }

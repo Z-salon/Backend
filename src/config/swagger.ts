@@ -8,12 +8,6 @@ const swaggerDefinition = {
     version: '1.0.0',
     description: 'OpenAPI documentation for the Z-Salon backend services.',
   },
-  servers: [
-    {
-      url: `http://localhost:${config.port}`,
-      description: 'Local development server',
-    },
-  ],
   components: {
     securitySchemes: {
       bearerAuth: {

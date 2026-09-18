@@ -21,24 +21,24 @@ import { config } from '../config/env';
 
 const router = Router();
 
-router.use(`${config.apiPrefix}/auth`, authRoutes);
-router.use(`${config.apiPrefix}`, invitationRoutes);
-router.use(`${config.apiPrefix}`, memberRoutes);
-router.use(`${config.apiPrefix}`, roleRoutes);
-router.use(`${config.apiPrefix}`, businessConfigurationRoutes);
-router.use(`${config.apiPrefix}`, branchRoutes);
-router.use(`${config.apiPrefix}`, branchPhoneRoutes);
-router.use(`${config.apiPrefix}`, batchCreateRoutes);
-router.use(`${config.apiPrefix}`, serviceCategoryRoutes);
-router.use(`${config.apiPrefix}`, serviceRoutes);
-router.use(`${config.apiPrefix}`, staffRoutes);
-router.use(`${config.apiPrefix}`, customerRoutes);
-router.use(`${config.apiPrefix}`, availabilityRoutes);
-router.use(`${config.apiPrefix}`, appointmentRoutes);
-router.use(`${config.apiPrefix}/customer`, customerAppointmentRoutes);
-router.use(`${config.apiPrefix}/public`, publicBookingRoutes);
-router.use(`${config.apiPrefix}/public`, customerConfirmationRoutes);
-router.use(`${config.apiPrefix}`, refundRequestRoutes);
+router.use(`/auth`, authRoutes);
+router.use(`/`, invitationRoutes);
+router.use(`/`, memberRoutes);
+router.use(`/`, roleRoutes);
+router.use(`/`, businessConfigurationRoutes);
+router.use(`/`, branchRoutes);
+router.use(`/`, branchPhoneRoutes);
+router.use(`/`, batchCreateRoutes);
+router.use(`/`, serviceCategoryRoutes);
+router.use(`/`, serviceRoutes);
+router.use(`/`, staffRoutes);
+router.use(`/`, customerRoutes);
+router.use(`/`, availabilityRoutes);
+router.use(`/`, appointmentRoutes);
+router.use(`/customer`, customerAppointmentRoutes);
+router.use(`/public`, publicBookingRoutes);
+router.use(`/public`, customerConfirmationRoutes);
+router.use(`/`, refundRequestRoutes);
 
 /**
  * @openapi

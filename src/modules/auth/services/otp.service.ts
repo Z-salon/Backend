@@ -11,7 +11,7 @@ export class OtpService {
     purpose: 'LOGIN' | 'REGISTRATION' | 'PASSWORD_RESET' | 'PHONE_VERIFICATION' | 'INVITATION_ACCEPTANCE' | 'PHONE_CHANGE',
     ip?: string,
     userAgent?: string
-  ): Promise<void> {
+  ): Promise<{ otp: string }> {
     const normalizedPhone = normalizePhone(phone);
 
     await this.checkRateLimits(normalizedPhone, ip);
@@ -37,6 +37,8 @@ export class OtpService {
     await sendOtpSms(normalizedPhone, otp);
 
     await this.incrementRateLimitCounters(normalizedPhone, ip);
+
+    return { otp };
   }
 
   async verifyOtp(

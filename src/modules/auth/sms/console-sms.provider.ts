@@ -13,6 +13,9 @@ export class ConsoleSmsProvider implements SmsProvider {
     console.log(`📞 To: ${phone}`);
     console.log(`🔐 OTP: ${otp}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+
+
   }
 
   async sendInvitationLink(phone: string, invitationUrl: string): Promise<void> {
