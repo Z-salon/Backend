@@ -57,12 +57,13 @@ export class PaymentReceiptController {
       }
       const customerId = appointment.customerId;
 
-      const { paymentMethodId, submittedAmount, receiptImageUrl, customerNote } = req.body;
+      const { paymentMethodId, submittedAmount, receiptImageUrl, receiptImagePublicId, customerNote } = req.body;
 
       const receipt = await paymentReceiptService.submitReceipt(appointmentId, customerId, {
         paymentMethodId,
         submittedAmount,
         receiptImageUrl,
+        receiptImagePublicId,
         customerNote,
       });
 

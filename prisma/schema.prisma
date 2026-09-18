@@ -150,10 +150,12 @@ model Business {
   user      User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
   // Branding
-  logoUrl        String?
-  coverImageUrl  String?
-  primaryColor   String?
-  secondaryColor String?
+  logoUrl            String?
+  logoPublicId       String?
+  coverImageUrl      String?
+  coverImagePublicId String?
+  primaryColor       String?
+  secondaryColor     String?
 
   // Public Business Information
   description String?
@@ -584,6 +586,7 @@ model ServiceCategorySampleWork {
   name        String
   description String?
   url         String
+  publicId    String?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1093,11 +1096,12 @@ model PaymentReceipt {
   businessId       String
   branchId         String
   paymentMethodId  String
-  expectedAmount   Decimal                   @db.Decimal(12, 2)
-  submittedAmount  Decimal?                  @db.Decimal(12, 2)
-  receiptImageUrl  String
-  customerNote     String?
-  status           PaymentVerificationStatus @default(PENDING)
+  expectedAmount       Decimal                   @db.Decimal(12, 2)
+  submittedAmount      Decimal?                  @db.Decimal(12, 2)
+  receiptImageUrl      String
+  receiptImagePublicId String?
+  customerNote         String?
+  status               PaymentVerificationStatus @default(PENDING)
   rejectionReason  String?
   submittedAt      DateTime                  @default(now())
   reviewedAt       DateTime?

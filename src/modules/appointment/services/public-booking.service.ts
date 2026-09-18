@@ -65,6 +65,7 @@ export class PublicBookingService {
       paymentMethodId: string;
       submittedAmount?: number;
       receiptImageUrl: string;
+      receiptImagePublicId: string;
       customerNote?: string;
     }
   ) {
@@ -85,6 +86,7 @@ export class PublicBookingService {
       paymentMethodId: input.paymentMethodId,
       submittedAmount: input.submittedAmount,
       receiptImageUrl: input.receiptImageUrl,
+      receiptImagePublicId: input.receiptImagePublicId,
       customerNote: input.customerNote,
     });
   }

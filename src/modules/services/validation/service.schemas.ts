@@ -27,6 +27,7 @@ export const updateCategoryBranchAssignmentSchema = z.object({
 export const createSampleWorkSchema = z.object({
   name: z.string({ required_error: 'Name is required' }).min(1).max(250).trim(),
   url: z.string({ required_error: 'URL is required' }).url('Invalid URL'),
+  publicId: z.string({ required_error: 'Public ID is required' }).min(1),
   description: z.string().max(1000).optional(),
 });
 

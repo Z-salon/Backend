@@ -57,6 +57,7 @@ export const publicReceiptSchema = z.object({
   paymentMethodId: z.string().uuid('Invalid payment method ID'),
   submittedAmount: z.number().positive().optional(),
   receiptImageUrl: z.string().url('A valid receipt image URL is required'),
+  receiptImagePublicId: z.string().min(1, 'Receipt image public ID is required'),
   customerNote: z.string().max(1000).optional(),
 });
 

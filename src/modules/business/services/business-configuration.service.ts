@@ -1,6 +1,7 @@
 import { prisma } from '../../../libs/prisma';
 import { auditLogService } from './audit-log.service';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
+import { imageService } from '../../../libs/image.service';
 
 export interface BusinessUpdateInput {
   name?: string;
@@ -9,15 +10,12 @@ export interface BusinessUpdateInput {
 }
 
 export interface BrandingUpdateInput {
-  logoUrl?: string | null;
-  coverImageUrl?: string | null;
+  logo?: { url: string; publicId: string } | null;
+  cover?: { url: string; publicId: string } | null;
   primaryColor?: string | null;
   secondaryColor?: string | null;
   description?: string | null;
   aboutUs?: string | null;
-  address?: string | null;
-  phone?: string | null;
-  email?: string | null;
   website?: string | null;
   facebookUrl?: string | null;
   instagramUrl?: string | null;
@@ -52,15 +50,10 @@ export interface BusinessResponse {
 
 const ALLOWED_BUSINESS_UPDATE_FIELDS = ['name', 'currency', 'timezone'];
 const ALLOWED_BRANDING_FIELDS = [
-  'logoUrl',
-  'coverImageUrl',
   'primaryColor',
   'secondaryColor',
   'description',
   'aboutUs',
-  'address',
-  'phone',
-  'email',
   'website',
   'facebookUrl',
   'instagramUrl',
@@ -203,8 +196,8 @@ export class BusinessConfigurationService {
     }
 
     return {
-      logoUrl: business.logoUrl ?? null,
-      coverImageUrl: business.coverImageUrl ?? null,
+      logo: business.logoUrl ? { url: business.logoUrl, publicId: business.logoPublicId || '' } : null,
+      cover: business.coverImageUrl ? { url: business.coverImageUrl, publicId: business.coverImagePublicId || '' } : null,
       primaryColor: business.primaryColor ?? null,
       secondaryColor: business.secondaryColor ?? null,
       description: business.description ?? null,
@@ -235,6 +228,7 @@ export class BusinessConfigurationService {
         sampleWorks: c.sampleWorks.map((sw: any) => ({
           id: sw.id,
           url: sw.url,
+          publicId: sw.publicId || '',
           name: sw.name,
           description: sw.description,
           serviceCategoryId: sw.categoryId
@@ -259,6 +253,33 @@ export class BusinessConfigurationService {
     }
 
     const changes: Record<string, any> = {};
+
+    let oldLogoPublicId: string | null = null;
+    let oldCoverImagePublicId: string | null = null;
+
+    if (input.logo !== undefined) {
+      const newLogoUrl = input.logo?.url || null;
+      const newLogoPublicId = input.logo?.publicId || null;
+      if (newLogoUrl !== business.logoUrl) {
+        changes.logoUrl = newLogoUrl;
+        changes.logoPublicId = newLogoPublicId;
+        if (business.logoPublicId) {
+          oldLogoPublicId = business.logoPublicId;
+        }
+      }
+    }
+
+    if (input.cover !== undefined) {
+      const newCoverUrl = input.cover?.url || null;
+      const newCoverPublicId = input.cover?.publicId || null;
+      if (newCoverUrl !== business.coverImageUrl) {
+        changes.coverImageUrl = newCoverUrl;
+        changes.coverImagePublicId = newCoverPublicId;
+        if (business.coverImagePublicId) {
+          oldCoverImagePublicId = business.coverImagePublicId;
+        }
+      }
+    }
 
     for (const field of ALLOWED_BRANDING_FIELDS) {
       const value = input[field as keyof BrandingUpdateInput];
@@ -299,6 +320,13 @@ export class BusinessConfigurationService {
 
       return updated;
     });
+
+    if (oldLogoPublicId) {
+      imageService.safeDeleteImage(oldLogoPublicId).catch(() => {});
+    }
+    if (oldCoverImagePublicId) {
+      imageService.safeDeleteImage(oldCoverImagePublicId).catch(() => {});
+    }
 
     return this.mapBusinessToResponse(updatedBusiness);
   }

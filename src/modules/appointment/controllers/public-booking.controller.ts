@@ -39,12 +39,13 @@ export class PublicBookingController {
   async submitPublicReceipt(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { businessId, appointmentId } = req.params;
-      const { verificationToken, paymentMethodId, submittedAmount, receiptImageUrl, customerNote } = req.body;
+      const { verificationToken, paymentMethodId, submittedAmount, receiptImageUrl, receiptImagePublicId, customerNote } = req.body;
 
       const receipt = await publicBookingService.submitPublicReceipt(businessId, appointmentId, {
         paymentMethodId,
         submittedAmount,
         receiptImageUrl,
+        receiptImagePublicId,
         customerNote,
       });
 

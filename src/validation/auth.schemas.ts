@@ -148,9 +148,14 @@ export const businessUpdateSchema = z.object({
   message: 'At least one field must be provided for update',
 });
 
+export const uploadedImageSchema = z.object({
+  url: z.string().url('A valid image URL is required'),
+  publicId: z.string().min(1, 'Public ID is required'),
+});
+
 export const businessBrandingSchema = z.object({
-  logoUrl: z.string().url().nullable().optional(),
-  coverImageUrl: z.string().url().nullable().optional(),
+  logo: uploadedImageSchema.nullable().optional(),
+  cover: uploadedImageSchema.nullable().optional(),
   primaryColor: z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #FF0000)').nullable().optional(),
   secondaryColor: z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #00FF00)').nullable().optional(),
   description: z.string().max(1000).nullable().optional(),

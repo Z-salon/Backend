@@ -2,6 +2,7 @@ import { prisma } from '../../../libs/prisma';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
 import { auditLogService } from '../../business/services/audit-log.service';
 import { ServiceCategoryStatus } from '@prisma/client';
+import { imageService } from '../../../libs/image.service';
 
 const SYSTEM_ROLES = ['OWNER', 'ADMIN'];
 const BRANCH_MANAGER_ROLE = 'BRANCH_MANAGER';
@@ -21,6 +22,7 @@ export interface UpdateServiceCategoryInput {
 export interface CreateSampleWorkInput {
   name: string;
   url: string;
+  publicId: string;
   description?: string;
 }
 
@@ -458,6 +460,7 @@ export class ServiceCategoryService {
         categoryId,
         name: input.name,
         url: input.url,
+        publicId: input.publicId,
         description: input.description,
       },
     });
@@ -468,7 +471,7 @@ export class ServiceCategoryService {
       action: 'SAMPLE_WORK_ADDED',
       entityType: 'ServiceCategorySampleWork',
       entityId: sampleWork.id,
-      newValues: { categoryId, name: input.name, url: input.url, description: input.description },
+      newValues: { categoryId, name: input.name, url: input.url, publicId: input.publicId, description: input.description },
     });
 
     return sampleWork;
@@ -492,6 +495,10 @@ export class ServiceCategoryService {
     await prisma.serviceCategorySampleWork.delete({
       where: { id: sampleWorkId },
     });
+
+    if (sampleWork.publicId) {
+      imageService.safeDeleteImage(sampleWork.publicId).catch(() => {});
+    }
 
     await auditLogService.createAuditLog({
       businessId: sampleWork.category.businessId,

@@ -35,6 +35,7 @@ export class PaymentReceiptService {
       paymentMethodId: string;
       submittedAmount?: number;
       receiptImageUrl: string;
+      receiptImagePublicId: string;
       customerNote?: string;
     }
   ) {
@@ -91,6 +92,7 @@ export class PaymentReceiptService {
           ? new Prisma.Decimal(data.submittedAmount.toString())
           : null,
         receiptImageUrl: data.receiptImageUrl,
+        receiptImagePublicId: data.receiptImagePublicId,
         customerNote: data.customerNote,
         status: PaymentVerificationStatus.PENDING,
       },

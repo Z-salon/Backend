@@ -2,7 +2,8 @@
 
 Reference for integrating against the Z-Salon REST API. Covers **Auth**, **Business
 Configuration**, **Payment Methods**, **Branch Management**, **Branch Working Hours**,
-**Branch Booking Configuration**, **Service Categories** and **Services**.
+**Branch Booking Configuration**, **Service Categories**, **Services**, **Staff**,
+**Staff Qualifications**, **Staff Time Off** and **Batch Create**.
 
 Everything here is derived from the routes, validation schemas and services in `src/`.
 Where the Swagger annotations and the code disagree, the **code wins** and the
@@ -465,8 +466,8 @@ with sample works.
   "success": true,
   "message": "Business branding retrieved",
   "data": {
-    "logoUrl": "https://cdn.example.com/logo.png",
-    "coverImageUrl": null,
+    "logo": { "url": "https://res.cloudinary.com/demo/image/upload/logo.png", "publicId": "z-salon/logos/b1_logo" },
+    "cover": null,
     "primaryColor": "#FF5722",
     "secondaryColor": "#212121",
     "description": "Hair & beauty",
@@ -483,7 +484,7 @@ with sample works.
     "serviceCategories": [
       {
         "id": "c1...", "name": "Hair", "description": "Cuts & styling",
-        "sampleWorks": [{ "id": "sw1...", "url": "https://...", "name": "Balayage", "description": null, "serviceCategoryId": "c1..." }]
+        "sampleWorks": [{ "id": "sw1...", "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg", "publicId": "z-salon/samples/sw1", "name": "Balayage", "description": null, "serviceCategoryId": "c1..." }]
       }
     ]
   }
@@ -495,22 +496,39 @@ with sample works.
 ### 3.4 `PATCH /api/v1/businesses/{businessId}/branding` — Bearer required
 
 **Auth:** membership + `BUSINESS_MANAGE_BRANDING` (Owner/Admin by default).
-**Body (`.strict()`, at least one field)** — all nullable, all clearable with `null`:
+**Body (`.strict()`, at least one field):**
+
+> **Image upload model:** The frontend uploads images directly to Cloudinary and receives
+> back a `secure_url` and `public_id`. Pass both to this endpoint in the `logo` / `cover`
+> objects. The backend stores them, and **deletes the old Cloudinary asset** automatically
+> when an image is replaced or set to `null`.
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `logoUrl`, `coverImageUrl` | string (URL) | valid URL |
+| `logo` | `{ url, publicId }` \| `null` | Set to `null` to clear the logo; the old asset is deleted from Cloudinary |
+| `cover` | `{ url, publicId }` \| `null` | Set to `null` to clear the cover image |
 | `primaryColor`, `secondaryColor` | string | `#RGB` or `#RRGGBB` |
 | `description` | string | ≤ 1000 |
 | `aboutUs` | string | ≤ 5000 |
 | `website`, `facebookUrl`, `instagramUrl`, `telegramUrl`, `tiktokUrl` | string (URL) | valid URL |
 
-> `address`, `phone` and `email` exist on the `BrandingUpdateInput` **service**
-> interface but were **removed from `businessBrandingSchema`**, and the body is
-> `.strict()` — sending any of them returns 400. Put addresses on branches (§5) and
+```json
+{
+  "logo": {
+    "url": "https://res.cloudinary.com/demo/image/upload/v1234/logo.png",
+    "publicId": "z-salon/logos/b1_logo"
+  },
+  "cover": null,
+  "primaryColor": "#FF5722",
+  "description": "Hair & beauty professionals since 2015"
+}
+```
+
+> `address`, `phone` and `email` have been **removed from this endpoint** (the body is
+> `.strict()` — sending them returns 400). Put addresses on branches (§5) and
 > contact numbers on branch phones (§5.5).
 
-Returns the same object as §3.2.
+Returns the same object as §3.3.
 
 ---
 
@@ -1093,10 +1111,29 @@ All optional. Errors: 409 duplicate name, 404 not found.
 
 | Method | Path | Auth | Body |
 | --- | --- | --- | --- |
-| POST | `/service-categories/{categoryId}/sample-works` | Bearer | `{ "name": "Balayage", "url": "https://...", "description": "…" }` |
+| POST | `/service-categories/{categoryId}/sample-works` | Bearer | `{ "name": "Balayage", "url": "https://...", "publicId": "z-salon/samples/sw1", "description": "…" }` |
 | DELETE | `/sample-works/{sampleWorkId}` | Bearer | — |
 
-`name` required (1–250), `url` required and must be a valid URL, `description` ≤ 1000.
+`name` required (1–250), `url` required (valid URL), **`publicId` required** (the Cloudinary
+public ID returned after upload), `description` optional (≤ 1000).
+
+> **Image deletion:** when a sample work is deleted, the backend automatically calls
+> Cloudinary to delete the associated asset using its `publicId`. Failures are caught
+> silently so the DB record is always removed regardless.
+
+**POST 201** response `data`:
+
+```json
+{
+  "id": "sw2...",
+  "categoryId": "c1...",
+  "name": "Balayage",
+  "url": "https://res.cloudinary.com/demo/image/upload/sample.jpg",
+  "publicId": "z-salon/samples/sw1",
+  "description": "Warm tones",
+  "createdAt": "...",
+  "updatedAt": "..."
+}
 
 ---
 
@@ -1304,7 +1341,65 @@ request, so a revoked token fails immediately.
 
 ---
 
-## 11. Implementation notes & known gaps
+## 11. Payment Receipts
+
+Customers submit payment proof (a screenshot uploaded to Cloudinary) for appointments
+that require advance payment. The backend stores the URL + public ID for audit logging.
+
+> **Retention policy:** Receipt images are **never deleted from Cloudinary** — they are
+> retained permanently for financial audit.
+
+### 11.1 `POST /api/v1/customer/appointments/{id}/receipt` — Bearer (customer)
+
+Submit a payment receipt for a customer's own appointment.
+
+**Body:**
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `paymentMethodId` | ✅ | UUID; must be an active method of the business |
+| `receiptImageUrl` | ✅ | Valid URL (the Cloudinary `secure_url`) |
+| `receiptImagePublicId` | ✅ | The Cloudinary `public_id` (for audit) |
+| `submittedAmount` | ❌ | Positive number |
+| `customerNote` | ❌ | ≤ 1000 |
+
+```json
+{
+  "paymentMethodId": "pm1...",
+  "receiptImageUrl": "https://res.cloudinary.com/demo/image/upload/receipt.jpg",
+  "receiptImagePublicId": "z-salon/receipts/appt1_receipt",
+  "submittedAmount": 500,
+  "customerNote": "Sent via Telebirr"
+}
+```
+
+**201** response `data` is the created receipt record.
+
+### 11.2 `GET /api/v1/customer/appointments/{id}/receipt` — Bearer (customer)
+
+Fetch the current verification status of the customer's own receipt.
+
+### 11.3 Public receipt submission (no login required)
+
+`POST /api/v1/public/{businessId}/appointments/{appointmentId}/receipt`
+
+Used in the **customer confirmation flow** where the customer follows an SMS link.
+The body is identical to §11.1, with the addition of a `verificationToken` (customer action token):
+
+```json
+{
+  "verificationToken": "cat_abc123...",
+  "paymentMethodId": "pm1...",
+  "receiptImageUrl": "https://res.cloudinary.com/demo/image/upload/receipt.jpg",
+  "receiptImagePublicId": "z-salon/receipts/appt1_receipt",
+  "submittedAmount": 500,
+  "customerNote": "Sent via Telebirr"
+}
+```
+
+---
+
+## 12. Implementation notes & known gaps
 
 These are behaviours worth knowing before you integrate; they are observations about the
 current code, not requests to change it.
@@ -1315,8 +1410,7 @@ current code, not requests to change it.
    * `PATCH .../booking-config` documents a flat body; the real schema requires nested
      `booking` / `cancellation` / `confirmation` groups.
    * `PATCH .../branches/{branchId}/config` documents `isActive` as optional; it is required.
-   * Swagger for `PATCH /businesses/{businessId}/branding` lists `address`, `phone` and
-     `email`; the schema no longer accepts them (`.strict()` → 400).
+   * Swagger for `PATCH /businesses/{businessId}/branding` lists `logoUrl`/`coverImageUrl` as flat strings and lists `address`, `phone`, `email` — the schema now requires nested `logo`/`cover` objects and no longer accepts contact fields (`.strict()` → 400).
    * Payment-method routes are documented twice (see note 4).
 3. **Payment method `type`** is a plain `String` column with **no enum constraint** in the
    database. Swagger documents `CASH | BANK_TRANSFER | MOBILE_MONEY`; the API will accept
@@ -1341,3 +1435,707 @@ current code, not requests to change it.
     them before doing arithmetic.
 12. **Times are timezone-naive `HH:mm` strings.** Branch/business timezone applies; do not
     assume UTC.
+13. **Image uploads use Cloudinary.** The frontend uploads directly to Cloudinary and
+    receives `{ secure_url, public_id }`. Pass both to the backend endpoints that accept
+    images (`logo`, `cover` in branding; `url`+`publicId` in sample works;
+    `receiptImageUrl`+`receiptImagePublicId` in payment receipts). The backend handles
+    Cloudinary asset deletion automatically when images are replaced or sample works are
+    removed. Payment receipt images are **never deleted**.
+
+---
+
+## 12. Staff
+
+Base paths: `/api/v1/businesses/{businessId}/staff` (create, list) and
+`/api/v1/staff/{staffId}` (detail, update, move branch).
+
+### 12.0 Auth model
+
+| Endpoint | Middleware | Service-level role check |
+| --- | --- | --- |
+| `POST /businesses/{businessId}/staff` | `authenticate` + `requireBusinessMembership` | **OWNER or ADMIN** |
+| `GET /businesses/{businessId}/staff` | `authenticate` + `requireBusinessMembership` | any `ACTIVE` member (branch managers filtered to their branches) |
+| `GET /staff/{staffId}` | `authenticate` only | membership resolved from the staff row; branch-manager scope enforced |
+| `PATCH /staff/{staffId}` | `authenticate` only | membership resolved from the staff row; branch-manager scope enforced |
+| `PATCH /staff/{staffId}/branch` | `authenticate` only | **OWNER or ADMIN** |
+
+All requests need `Authorization: Bearer <accessToken>`.
+
+The `/staff/{staffId}` routes carry **no `businessId`**, so the controller first loads the
+staff row to resolve its business. An unknown `staffId` therefore returns **404
+`NOT_FOUND`** (`"Staff not found"`) before any membership/role check runs.
+
+Role failures:
+
+* not an `ACTIVE` member of the business → 403 `NOT_BUSINESS_MEMBER`
+* member but role is not Owner/Admin where required → 403 `INSUFFICIENT_PERMISSIONS`
+  (`"Only business owner or admin can perform this action"`)
+* branch-scoped user acting outside their branches → 403 `FORBIDDEN`
+
+### 12.1 Enums
+
+```text
+StaffStatus        ACTIVE | INACTIVE
+```
+
+New staff are always created with `status: "ACTIVE"`; change it later via
+`PATCH /staff/{staffId}`.
+
+### 12.2 The Staff object
+
+Create/update return the raw row. List and detail add `branch` (and detail also adds
+active `categoryQualifications` / `serviceQualifications`):
+
+```json
+{
+  "id": "st1a2b3c-...",
+  "businessId": "b1a2b3c4-...",
+  "branchId": "br1a2b3c-...",
+  "userId": null,
+  "firstName": "Sara",
+  "lastName": "Kebede",
+  "email": "sara@bella.example",
+  "phone": "+251911223344",
+  "title": "Senior Stylist",
+  "bio": "10 years of coloring experience",
+  "status": "ACTIVE",
+  "createdAt": "2026-09-16T09:40:00.000Z",
+  "updatedAt": "2026-09-16T09:40:00.000Z"
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | |
+| `businessId` | uuid | |
+| `branchId` | uuid | the staff member's home branch |
+| `userId` | uuid \| null | link to a login user, if any. **Never settable through this API.** |
+| `firstName`, `lastName` | string | 1–100 |
+| `email`, `phone`, `title`, `bio` | string \| null | |
+| `status` | enum | `StaffStatus` |
+| `createdAt`, `updatedAt` | ISO datetime | |
+
+### 12.3 `POST /api/v1/businesses/{businessId}/staff` — Bearer, Owner/Admin
+
+`branchId` must exist in the business **and be active**, otherwise 400
+(`BRANCH_NOT_IN_BUSINESS` / `BAD_REQUEST`).
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `branchId` | ✅ | uuid, active branch in this business |
+| `firstName` | ✅ | 1–100 |
+| `lastName` | ✅ | 1–100 |
+| `email` | ❌ | valid email |
+| `phone` | ❌ | E.164, `^\+[1-9]\d{1,14}$` (e.g. `+251911223344`) |
+| `title` | ❌ | ≤ 100 |
+| `bio` | ❌ | ≤ 1000 |
+
+```json
+{
+  "branchId": "br1a2b3c-...",
+  "firstName": "Sara",
+  "lastName": "Kebede",
+  "email": "sara@bella.example",
+  "phone": "+251911223344",
+  "title": "Senior Stylist",
+  "bio": "10 years of coloring experience"
+}
+```
+
+**201** `data` = the Staff object (§12.2). Audited as `STAFF_CREATED`.
+
+Errors: 400 `VALIDATION_ERROR` / `BRANCH_NOT_IN_BUSINESS` / `BAD_REQUEST`, 401, 403.
+
+### 12.4 `GET /api/v1/businesses/{businessId}/staff` — Bearer, any member
+
+| Query param | Type | Notes |
+| --- | --- | --- |
+| `branchId` | uuid | Filter to one branch. A branch-scoped user requesting a branch outside their scope gets 403 `FORBIDDEN`. |
+| `status` | `ACTIVE` \| `INACTIVE` | Filter by status |
+
+`data` is an array of Staff objects, each with a nested
+`branch: { id, name, isActive }`, ordered by `createdAt` **desc**.
+
+```json
+{
+  "success": true,
+  "message": "Staff retrieved successfully",
+  "data": [
+    {
+      "id": "st1a2b3c-...",
+      "businessId": "b1a2b3c4-...",
+      "branchId": "br1a2b3c-...",
+      "userId": null,
+      "firstName": "Sara",
+      "lastName": "Kebede",
+      "email": "sara@bella.example",
+      "phone": "+251911223344",
+      "title": "Senior Stylist",
+      "bio": "10 years of coloring experience",
+      "status": "ACTIVE",
+      "createdAt": "2026-09-16T09:40:00.000Z",
+      "updatedAt": "2026-09-16T09:40:00.000Z",
+      "branch": { "id": "br1a2b3c-...", "name": "Main Branch", "isActive": true }
+    }
+  ]
+}
+```
+
+> Scope note: when `branchId` is omitted, a user who is **neither Owner/Admin nor a
+> Branch Manager** (e.g. a `RECEPTIONIST`) receives **every** staff member in the
+> business. Only branch managers are auto-filtered to their assigned branches.
+
+### 12.5 `GET /api/v1/staff/{staffId}` — Bearer
+
+Returns the Staff object with `branch` plus its **active** qualifications:
+
+```json
+{
+  "success": true,
+  "message": "Staff details retrieved successfully",
+  "data": {
+    "id": "st1a2b3c-...",
+    "businessId": "b1a2b3c4-...",
+    "branchId": "br1a2b3c-...",
+    "userId": null,
+    "firstName": "Sara",
+    "lastName": "Kebede",
+    "email": "sara@bella.example",
+    "phone": "+251911223344",
+    "title": "Senior Stylist",
+    "bio": "10 years of coloring experience",
+    "status": "ACTIVE",
+    "createdAt": "2026-09-16T09:40:00.000Z",
+    "updatedAt": "2026-09-16T09:40:00.000Z",
+    "branch": { "id": "br1a2b3c-...", "name": "Main Branch", "isActive": true },
+    "categoryQualifications": [
+      { "id": "cq1...", "staffId": "st1a2b3c-...", "categoryId": "c1...", "isActive": true,
+        "createdAt": "...", "updatedAt": "...",
+        "category": { "id": "c1...", "name": "Hair", "status": "ACTIVE" } }
+    ],
+    "serviceQualifications": [
+      { "id": "sq1...", "staffId": "st1a2b3c-...", "serviceId": "s1...",
+        "proficiencyLevel": "SENIOR", "isActive": true,
+        "createdAt": "...", "updatedAt": "...",
+        "service": { "id": "s1...", "name": "Haircut & Blow Dry", "status": "ACTIVE" } }
+    ]
+  }
+}
+```
+
+Errors: 404 `NOT_FOUND`, 403 `FORBIDDEN` (branch-manager scope), 403 `NOT_BUSINESS_MEMBER`.
+
+### 12.6 `PATCH /api/v1/staff/{staffId}` — Bearer
+
+All fields optional; send at least one.
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `firstName` | string | 1–100 |
+| `lastName` | string | 1–100 |
+| `email` | string | valid email |
+| `phone` | string | E.164 |
+| `title` | string | ≤ 100 |
+| `bio` | string | ≤ 1000 |
+| `status` | enum | `StaffStatus` (`ACTIVE` \| `INACTIVE`) |
+
+```json
+{ "title": "Master Stylist", "status": "INACTIVE" }
+```
+
+Returns the updated Staff object. Audit action is `STAFF_UPDATED`, or `STAFF_ACTIVE` /
+`STAFF_INACTIVE` when `status` changes.
+
+Errors: 400 `VALIDATION_ERROR`, 404 `NOT_FOUND`, 403 `FORBIDDEN`.
+
+> **Notes:**
+> * The body schema is **not `.strict()`** and is passed verbatim to
+>   `prisma.staff.update`, so an unknown field surfaces as a Prisma error, not a clean 400.
+>   Send only the fields above.
+> * `email` / `phone` are plain optional strings — you **cannot clear them by sending
+>   `null`** (a `null` fails validation). Omit to leave unchanged.
+> * Role check quirk: this route only rejects when the caller is *non-Owner/Admin **and**
+>   non-Branch-Manager* — branch-scope is the only guard. Rank-and-file members that hold
+>   neither role can technically patch staff; the UI should gate this itself.
+
+### 12.7 `PATCH /api/v1/staff/{staffId}/branch` — Bearer, Owner/Admin
+
+Move a staff member to another branch.
+
+```json
+{ "branchId": "br2a2b3c-..." }
+```
+
+Rules:
+
+* target branch must exist in the business (`BRANCH_NOT_IN_BUSINESS`) and be active (`BAD_REQUEST`)
+* moving to the **same** branch is a no-op that returns the current row
+* audited as `STAFF_BRANCH_CHANGED`
+
+Returns the updated Staff object. Errors: 400, 404, 403 `INSUFFICIENT_PERMISSIONS`.
+
+---
+
+## 13. Staff Qualifications
+
+Base path `/api/v1/staff/{staffId}`. All four routes use `authenticate` only; the
+service resolves the business from the staff row and requires membership, then applies
+Owner/Admin **or** branch-manager scope.
+
+> Qualifications are **soft-deleted**: removal sets `isActive: false`. Reading staff
+> details (§12.5) returns only `isActive: true` rows, and re-adding a previously removed
+> qualification reactivates the same row instead of creating a duplicate.
+
+### 13.1 Enums
+
+```text
+ProficiencyLevel   TRAINEE | JUNIOR | SENIOR | EXPERT
+```
+
+### 13.2 Category qualifications
+
+#### `POST /api/v1/staff/{staffId}/category-qualifications` — Bearer
+
+```json
+{ "categoryId": "c1a2b3c4-..." }
+```
+
+The category must be `ACTIVE`, belong to the business, **and** have an active branch
+assignment at the staff member's branch. Otherwise 400 `BAD_REQUEST`
+(`"Category is not available or active at this staff's branch"`).
+
+| Result | Meaning |
+| --- | --- |
+| 201 | Created (or reactivated) |
+| 409 `CONFLICT` | Already has an **active** qualification for this category |
+| 400 `BAD_REQUEST` | Category not active/assigned at the staff's branch |
+| 404 `NOT_FOUND` | Unknown `staffId` |
+
+**201** `data`:
+
+```json
+{
+  "success": true,
+  "message": "Category qualification added",
+  "data": {
+    "id": "cq1a2b3c-...",
+    "staffId": "st1a2b3c-...",
+    "categoryId": "c1a2b3c4-...",
+    "isActive": true,
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:00:00.000Z"
+  }
+}
+```
+
+Audited as `STAFF_CATEGORY_QUALIFICATION_ADDED`.
+
+#### `DELETE /api/v1/staff/{staffId}/category-qualifications/{categoryId}` — Bearer
+
+Soft-deactivates the qualification. **Idempotent**: if no active qualification exists it
+still returns 200.
+
+```json
+{ "success": true, "message": "Category qualification removed", "data": null }
+```
+
+Audited as `STAFF_CATEGORY_QUALIFICATION_REMOVED` when a row was actually changed.
+
+### 13.3 Service qualifications
+
+#### `POST /api/v1/staff/{staffId}/service-qualifications` — Bearer
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `serviceId` | ✅ | uuid; service must be `ACTIVE`, in the business, and actively assigned to the staff's branch |
+| `proficiencyLevel` | ❌ | `ProficiencyLevel`, default `SENIOR` |
+
+```json
+{ "serviceId": "s1a2b3c4-...", "proficiencyLevel": "EXPERT" }
+```
+
+Behaviour:
+
+* service not available/active at the staff's branch → 400 `BAD_REQUEST`
+  (`"Service is not available or active at this staff's branch"`)
+* already active **with the same** `proficiencyLevel` → 409 `CONFLICT`
+* already exists but with a **different** level → the row is **updated** and returned 201
+
+**201** `data`:
+
+```json
+{
+  "success": true,
+  "message": "Service qualification added",
+  "data": {
+    "id": "sq1a2b3c-...",
+    "staffId": "st1a2b3c-...",
+    "serviceId": "s1a2b3c4-...",
+    "proficiencyLevel": "EXPERT",
+    "isActive": true,
+    "createdAt": "2026-09-16T10:05:00.000Z",
+    "updatedAt": "2026-09-16T10:05:00.000Z"
+  }
+}
+```
+
+Audited as `STAFF_SERVICE_QUALIFICATION_ADDED`.
+
+#### `DELETE /api/v1/staff/{staffId}/service-qualifications/{serviceId}` — Bearer
+
+Soft-deactivates. Idempotent (200 even if nothing was active).
+
+```json
+{ "success": true, "message": "Service qualification removed", "data": null }
+```
+
+---
+
+## 14. Staff Time Off
+
+Base path `/api/v1/staff/{staffId}/time-off`. Auth is identical to §13 (`authenticate`,
+membership resolved from the staff row, Owner/Admin or branch-manager scope).
+
+### 14.1 The time-off object
+
+Time off is either a whole day or a single interval on one date. Responses always use
+`HH:mm` strings and a bare `YYYY-MM-DD` date (the DB stores `date` as a date and the
+interval as a time):
+
+```json
+{
+  "id": "to1a2b3c-...",
+  "date": "2026-09-25",
+  "allDay": false,
+  "start": "09:00",
+  "end": "13:00",
+  "reason": "Medical appointment"
+}
+```
+
+For an all-day entry, `start` and `end` are `null` and `allDay` is `true`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | uuid | |
+| `date` | string | `YYYY-MM-DD` |
+| `allDay` | boolean | |
+| `start`, `end` | `HH:mm` \| null | present only when `allDay` is `false` |
+| `reason` | string \| null | ≤ 500 |
+
+### 14.2 `GET /api/v1/staff/{staffId}/time-off` — Bearer
+
+| Query param | Type | Notes |
+| --- | --- | --- |
+| `from` | date | inclusive lower bound on `date` |
+| `to` | date | inclusive upper bound on `date` |
+
+`data` is an array ordered by `date` ascending.
+
+```json
+{
+  "success": true,
+  "message": "Time offs retrieved successfully",
+  "data": [
+    { "id": "to1...", "date": "2026-09-25", "allDay": false, "start": "09:00", "end": "13:00", "reason": "Medical appointment" },
+    { "id": "to2...", "date": "2026-10-01", "allDay": true,  "start": null,    "end": null,    "reason": "Annual leave" }
+  ]
+}
+```
+
+### 14.3 `POST /api/v1/staff/{staffId}/time-off` — Bearer
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `date` | ✅ | `YYYY-MM-DD` |
+| `allDay` | ✅ | boolean |
+| `start` | conditional | `HH:mm`; **required** when `allDay` is `false` |
+| `end` | conditional | `HH:mm`; **required** when `allDay` is `false` |
+| `reason` | ❌ | ≤ 500 |
+
+Rules enforced by the schema:
+
+* `allDay: true` → `start` **and** `end` must be omitted
+* `allDay: false` → both `start` and `end` required, and `start < end`
+
+Full day:
+
+```json
+{ "date": "2026-10-01", "allDay": true, "reason": "Annual leave" }
+```
+
+Partial day:
+
+```json
+{ "date": "2026-09-25", "allDay": false, "start": "09:00", "end": "13:00", "reason": "Medical appointment" }
+```
+
+**201** returns the time-off object (§14.1). Audited as `STAFF_TIME_OFF_CREATED`.
+
+Errors: 400 `{ "errors": ["allDay: Invalid time off configuration (check allDay and start/end times)"] }`
+(validation middleware shape), 404 `NOT_FOUND`.
+
+> There is **no overlap check** — you can create overlapping time-off entries.
+
+### 14.4 `PATCH /api/v1/staff/{staffId}/time-off/{timeOffId}` — Bearer
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `allDay` | boolean | switch between whole-day and partial |
+| `start` | `HH:mm` | |
+| `end` | `HH:mm` | |
+| `reason` | string \| null | ≤ 500 |
+
+* The **`date` cannot be changed** (it is not part of the update path; ignored if sent).
+* Setting `allDay: true` clears the interval.
+* Switching an existing all-day entry to `allDay: false` **requires both `start` and
+  `end`**, otherwise 400 `VALIDATION_ERROR`
+  (`"Start and end times are required for partial day time off"`).
+
+```json
+{ "allDay": false, "start": "14:00", "end": "18:00", "reason": "Training" }
+```
+
+Returns the updated object. Audited as `STAFF_TIME_OFF_UPDATED`. Errors: 400, 404.
+
+### 14.5 `DELETE /api/v1/staff/{staffId}/time-off/{timeOffId}` — Bearer
+
+**Hard delete.** Returns 200 even if the record does not exist (no-op).
+
+```json
+{ "success": true, "message": "Time off deleted successfully", "data": null }
+```
+
+Audited as `STAFF_TIME_OFF_DELETED`.
+
+---
+
+## 15. Batch Create
+
+Base path `/api/v1/businesses/{businessId}/...`. Four batch endpoints share one
+shape and one auth model.
+
+| Endpoint | Creates | Response `data` |
+| --- | --- | --- |
+| `POST /businesses/{businessId}/branches/batch` | Branches | **`{ count, items: [...] }`** |
+| `POST /businesses/{businessId}/services/batch` | Services (+ branch assignments) | array of Service rows |
+| `POST /businesses/{businessId}/staff/batch` | Staff (+ qualifications) | array of Staff rows |
+| `POST /businesses/{businessId}/payment-methods/batch` | Payment methods | array of PaymentMethod rows (see §4.6) |
+
+### 15.0 Auth & common rules
+
+* **Auth:** `Authorization: Bearer <accessToken>` + `requireBusinessMembership`, then the
+  service enforces **OWNER or ADMIN** (403 `INSUFFICIENT_PERMISSIONS`,
+  `"Only business owner or admin can perform batch creation"`). The
+  `requirePermission(...)` lines are **commented out** in the routes, so permission codes
+  are not consulted.
+* **Body:** `{ "items": [ ... ] }`. `items` is required; the service dereferences
+  `input.items.length`, so a **missing `items` → 500**. Always send an array.
+* **Batch size:** maximum **50** (`MAX_BATCH_SIZE`); more → 400 `VALIDATION_ERROR`
+  (`"Batch size cannot exceed 50 items"`).
+* **No Zod / `bodyValidator`** is applied to any batch route — the JSON goes straight to
+  the service and then to Prisma. Field rules below are what the service checks; anything
+  else (wrong type, unknown field) surfaces as a Prisma error (400/500). Validate client-side.
+* The whole batch is **atomic** (one `prisma.$transaction`) — one bad item fails the whole
+  request.
+* All responses use the standard envelope, HTTP **201**.
+
+### 15.1 `POST /api/v1/businesses/{businessId}/branches/batch`
+
+Item fields:
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `name` | ✅ | non-empty, ≤ 100; unique per business |
+| `address` | ✅ | required (used as sent; the single-branch route caps at 500) |
+| `email` | ❌ | stored as-is |
+| `timezone` | ❌ | IANA; defaults to the business timezone |
+| `phones` | ❌ | array of `{ phone, label?, isPrimary }` — `phone` normalized server-side |
+
+Validation order: size → duplicate `name`s **within the batch** → existing names in the DB
+→ timezone validity.
+
+```json
+{
+  "items": [
+    {
+      "name": "Piassa Branch",
+      "address": "Piassa, Addis Ababa",
+      "timezone": "Africa/Addis_Ababa",
+      "phones": [
+        { "phone": "+251911223344", "label": "Front desk", "isPrimary": true }
+      ]
+    },
+    {
+      "name": "Megenagna Branch",
+      "address": "Megenagna, Addis Ababa"
+    }
+  ]
+}
+```
+
+**201** `data` (note the extra `count` wrapper, unique to this endpoint):
+
+```json
+{
+  "success": true,
+  "message": "Branches created successfully",
+  "data": {
+    "count": 2,
+    "items": [
+      {
+        "id": "br9...", "businessId": "b1...", "name": "Piassa Branch",
+        "address": "Piassa, Addis Ababa", "email": null,
+        "timezone": "Africa/Addis_Ababa", "isActive": true,
+        "createdAt": "2026-09-18T08:00:00.000Z", "updatedAt": "2026-09-18T08:00:00.000Z",
+        "phones": [
+          { "id": "p9...", "phone": "+251911223344", "label": "Front desk", "isPrimary": true, "isActive": true }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Each branch also gets a default `BranchBookingConfig`. Audited as `BRANCHES_BATCH_CREATED`.
+
+Errors: 400 `VALIDATION_ERROR`/`CONFLICT` (duplicate in batch), 409 `CONFLICT` (name
+already exists), 403, 404 `BUSINESS_NOT_FOUND`.
+
+### 15.2 `POST /api/v1/businesses/{businessId}/services/batch`
+
+Item fields:
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `categoryId` | ✅ | uuid; must be `ACTIVE` and belong to the business |
+| `name` | ✅ | unique per business (no length check in code) |
+| `description` | ❌ | |
+| `durationMinutes` | ✅ | integer > 0 (service rejects ≤ 0) |
+| `price` | ✅ | number ≥ 0 (service rejects < 0) |
+| `employeeAssignmentMode` | ✅ | `CUSTOMER_CHOOSES` \| `SALON_ASSIGNS` \| `ANY_AVAILABLE` |
+| `showPriceToCustomer` | ❌ | defaults to `true` |
+| `depositPolicyType` | ❌ | `NONE` (default) \| `FIXED` \| `PERCENTAGE` \| `FULL` |
+| `depositAmount` | ❌ | number \| null; service rejects negative only |
+| `branchIds` | ✅ | ≥ 1 uuids; all must exist in the business and be **active**, and the category must be **active at each branch** |
+
+```json
+{
+  "items": [
+    {
+      "categoryId": "c1...",
+      "name": "Haircut & Blow Dry",
+      "durationMinutes": 60,
+      "price": 800,
+      "employeeAssignmentMode": "CUSTOMER_CHOOSES",
+      "showPriceToCustomer": true,
+      "depositPolicyType": "PERCENTAGE",
+      "depositAmount": 20,
+      "branchIds": ["br1...", "br2..."]
+    }
+  ]
+}
+```
+
+**201** `data` is a plain array of the created Service **rows** (no nested `category` or
+`branchAssignments`):
+
+```json
+{
+  "success": true,
+  "message": "Services created successfully",
+  "data": [
+    {
+      "id": "s9...", "businessId": "b1...", "categoryId": "c1...",
+      "name": "Haircut & Blow Dry", "description": null,
+      "durationMinutes": 60, "price": "800",
+      "employeeAssignmentMode": "CUSTOMER_CHOOSES", "showPriceToCustomer": true,
+      "depositPolicyType": "PERCENTAGE", "depositAmount": "20",
+      "status": "ACTIVE",
+      "createdAt": "2026-09-18T08:10:00.000Z", "updatedAt": "2026-09-18T08:10:00.000Z"
+    }
+  ]
+}
+```
+
+Side effect: a `ServiceBranchAssignment` is created per `branchId` with
+`durationMinutes` / `price` copied from the service and `bufferMinutes: 0`.
+Audited as `SERVICES_BATCH_CREATED`.
+
+> **Differences vs. the single-service endpoint (§9.1):** the batch path does **not**
+> enforce the deposit cross-field rules (a `FIXED` deposit larger than `price` is accepted),
+> and `price` / `depositAmount` here must be numbers (not numeric strings).
+
+Errors: 400 `VALIDATION_ERROR`, 400 `BRANCH_NOT_IN_BUSINESS`, 409 `CONFLICT` (duplicate
+name), 403.
+
+### 15.3 `POST /api/v1/businesses/{businessId}/staff/batch`
+
+Item fields:
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `branchId` | ✅ | uuid; must exist in the business and be active |
+| `firstName` | ✅ | |
+| `lastName` | ✅ | |
+| `email` | ❌ | stored as-is |
+| `phone` | ❌ | stored as-is (**not** E.164-validated in this path) |
+| `title` | ❌ | |
+| `bio` | ❌ | |
+| `serviceIds` | ❌ | uuids; each must be `ACTIVE` and in the business |
+| `categoryIds` | ❌ | uuids; each must be `ACTIVE` and in the business |
+
+```json
+{
+  "items": [
+    {
+      "branchId": "br1...",
+      "firstName": "Sara",
+      "lastName": "Kebede",
+      "email": "sara@bella.example",
+      "phone": "+251911223344",
+      "title": "Senior Stylist",
+      "bio": "10 years of coloring experience",
+      "serviceIds": ["s1...", "s2..."],
+      "categoryIds": ["c1..."]
+    }
+  ]
+}
+```
+
+**201** `data` is an array of the created Staff rows (same shape as §12.2, without the
+nested `branch`). `serviceIds` / `categoryIds` become **active** qualifications.
+Audited as `STAFF_BATCH_CREATED`.
+
+> **Caveats:**
+> * No duplicate-name check (staff names are not unique).
+> * Qualification branch assignment is **not** validated here — unlike §13, you can attach
+>   a service/category the staff member's branch does not offer. Validate client-side.
+> * `proficiencyLevel` cannot be supplied; batch service qualifications are created with
+>   the DB default `SENIOR`.
+
+Errors: 400 `VALIDATION_ERROR` / `BRANCH_NOT_IN_BUSINESS` / `BAD_REQUEST` (inactive branch),
+403, 404 `BUSINESS_NOT_FOUND`.
+
+### 15.4 `POST /api/v1/businesses/{businessId}/payment-methods/batch`
+
+See §4.6 for the full field list and rules (same auth model: membership + Owner/Admin).
+Item fields: `name` (✅, unique per business), `type` (✅, documented
+`CASH | CARD | MOBILE_MONEY | BANK_TRANSFER | OTHER`), `accountName`, `accountNumber`,
+`instructions`, `isActive` (default `true`), `displayOrder` (default `0`). Audit:
+`PAYMENT_METHODS_BATCH_CREATED`.
+
+### 15.5 End-to-end: bulk onboarding
+
+```text
+1. POST /businesses/{businessId}/branches/batch        → seed branches (booking config auto-created)
+2. PUT  /{businessId}/branches/{id}/weekly-hours        → open hours per branch (§6.2)
+3. POST /businesses/{businessId}/service-categories     → categories assigned to those branches (§8.1)
+4. POST /businesses/{businessId}/services/batch         → bulk services (needs categories active at branches)
+5. POST /businesses/{businessId}/staff/batch            → bulk staff (optionally pre-qualified)
+6. POST /staff/{staffId}/weekly-hours                   → per-staff working hours (§ not covered here)
+```
+
+> Batch staff qualifications are created without branch checks, so after step 5 verify
+> each staff member's services are actually offered at their branch (or re-add them via
+> §13, which validates).

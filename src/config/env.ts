@@ -37,6 +37,8 @@ const envSchema = z.object({
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().default(100),
 
   SESSION_CLEANUP_INTERVAL_MINUTES: z.coerce.number().int().default(60),
+
+  CLOUDINARY_URL: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -115,6 +117,7 @@ export const config = {
 
   isProduction: env.NODE_ENV === 'production',
   isDevelopment: env.NODE_ENV === 'development',
+  cloudinaryUrl: env.CLOUDINARY_URL,
 };
 
 export type Config = typeof config;
