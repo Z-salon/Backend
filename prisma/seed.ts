@@ -71,6 +71,10 @@ const permissions = [
   { code: 'BUSINESS_UPDATE', name: 'Update Business', module: 'BUSINESS', description: 'Update business details' },
   { code: 'BUSINESS_MANAGE_BRANDING', name: 'Manage Branding', module: 'BUSINESS', description: 'Manage business branding' },
   { code: 'BUSINESS_MANAGE_SETTINGS', name: 'Manage Settings', module: 'BUSINESS', description: 'Manage business settings' },
+
+  // Feedback permissions (OWNER/ADMIN only in the MVP)
+  { code: 'FEEDBACK_VIEW', name: 'View Feedback', module: 'FEEDBACK', description: 'View customer feedback submissions' },
+  { code: 'FEEDBACK_MANAGE', name: 'Manage Feedback', module: 'FEEDBACK', description: 'Manage feedback categories' },
 ];
 
 async function main() {

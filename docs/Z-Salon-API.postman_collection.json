@@ -1,0 +1,1230 @@
+{
+  "info": {
+    "_postman_id": "b7f1c2de-4a10-4d3e-9c77-0f4a52b6e9a1",
+    "name": "Z-Salon API — Appointments & Management",
+    "description": "Postman collection for the Z-Salon multi-tenant salon backend.\n\nCovers: Branch Management, Customers, Appointments (walk-in, phone/staff, online), Availability, Service Usage, Appointment Payments, Payment Receipts, Refunds, Customer Appointments, Public Booking, and Feedback.\n\n## Setup\n1. Set `baseUrl` and `businessId` in collection variables.\n2. Run **Auth › Login** first — it captures `accessToken` automatically.\n3. Create a branch / customer / service / staff, then capture their IDs from responses (scripts are included on key requests).\n\n## Time Handling\n- All datetimes in request bodies must be **ISO 8601** (e.g. `2026-09-24T09:00:00.000+03:00` — Ethiopia is GMT+3 / Africa/Addis_Ababa).\n- Availability `date` params are plain **YYYY-MM-DD**, interpreted in the **branch timezone**.\n- Responses return ISO 8601 UTC (`Z`); availability responses also echo the branch `timezone` and offset-based slot times.\n- Client-supplied `scheduledEnd` is ignored — duration comes from the service config.\n\nFull reference: `docs/ENDPOINTS-GUIDE.md`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "z-salon-backend"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "businessId", "value": "REPLACE_WITH_BUSINESS_ID", "type": "string" },
+    { "key": "branchId", "value": "REPLACE_WITH_BRANCH_ID", "type": "string" },
+    { "key": "customerId", "value": "REPLACE_WITH_CUSTOMER_ID", "type": "string" },
+    { "key": "customerPhone", "value": "+251912345678", "type": "string" },
+    { "key": "serviceId", "value": "REPLACE_WITH_SERVICE_ID", "type": "string" },
+    { "key": "staffId", "value": "REPLACE_WITH_STAFF_ID", "type": "string" },
+    { "key": "appointmentId", "value": "REPLACE_WITH_APPOINTMENT_ID", "type": "string" },
+    { "key": "paymentMethodId", "value": "REPLACE_WITH_PAYMENT_METHOD_ID", "type": "string" },
+    { "key": "usageId", "value": "REPLACE_WITH_USAGE_ID", "type": "string" },
+    { "key": "paymentId", "value": "REPLACE_WITH_PAYMENT_ID", "type": "string" },
+    { "key": "refundRequestId", "value": "REPLACE_WITH_REFUND_REQUEST_ID", "type": "string" },
+    { "key": "overrideId", "value": "REPLACE_WITH_OVERRIDE_ID", "type": "string" },
+    { "key": "availDate", "value": "2026-09-24", "type": "string" },
+    { "key": "bookingStart", "value": "2026-09-24T09:00:00.000+03:00", "type": "string" },
+    { "key": "verificationToken", "value": "", "type": "string" },
+    { "key": "feedbackToken", "value": "REPLACE_FEEDBACK_TOKEN", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "0. Auth (setup)",
+      "item": [
+        {
+          "name": "Login (phone + password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.accessToken) {",
+                  "  pm.collectionVariables.set('accessToken', body.data.accessToken);",
+                  "  pm.test('accessToken captured', function () { pm.expect(body.data.accessToken).to.be.a('string'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-name", "value": "Postman", "disabled": true }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+251911000000\",\n  \"password\": \"Str0ngPass1\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "description": "Staff/admin login. Returns `accessToken` (captured into collection variable) and sets the httpOnly `refreshToken` cookie.\n\nOTP alternative: `POST /auth/otp/request` → `POST /auth/otp/verify` → `POST /auth/login/complete`."
+          }
+        },
+        {
+          "name": "OTP — request",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+251912345678\",\n  \"purpose\": \"PHONE_VERIFICATION\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/request", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "request"] },
+            "description": "Purposes: LOGIN, REGISTRATION, PASSWORD_RESET, PHONE_VERIFICATION, INVITATION_ACCEPTANCE, PHONE_CHANGE.\n\nUsed for public booking (PHONE_VERIFICATION) before `POST /public/.../bookings`."
+          }
+        },
+        {
+          "name": "OTP — verify",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.verificationToken) {",
+                  "  pm.collectionVariables.set('verificationToken', body.data.verificationToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+251912345678\",\n  \"otp\": \"123456\",\n  \"purpose\": \"PHONE_VERIFICATION\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/otp/verify", "host": ["{{baseUrl}}"], "path": ["auth", "otp", "verify"] },
+            "description": "Returns `{ verificationToken }` (captured). Consumed later by the public booking endpoint."
+          }
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "refresh"] },
+            "description": "Rotates tokens using the httpOnly `refreshToken` cookie — enable cookie sending (Postman cookies are automatic per domain)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Branch Management",
+      "item": [
+        {
+          "name": "Create branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('branchId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bole Branch\",\n  \"address\": \"Bole Road, Addis Ababa\",\n  \"timezone\": \"Africa/Addis_Ababa\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/branches", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "branches"] },
+            "description": "Auth: Bearer + membership + BRANCH_CREATE. Timezone must be a valid IANA id (defaults to business timezone). 409 on duplicate branch name."
+          }
+        },
+        {
+          "name": "List branches",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/branches", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "branches"] },
+            "description": "Auth: Bearer + membership + BRANCH_VIEW or BUSINESS_VIEW."
+          }
+        },
+        {
+          "name": "Get branch",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}"] },
+            "description": "Note the path shape: `/{businessId}/branches/{branchId}`."
+          }
+        },
+        {
+          "name": "Update branch",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Bole Branch (renovated)\",\n  \"isActive\": true\n}" },
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}"] }
+          }
+        },
+        {
+          "name": "Get weekly hours",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/weekly-hours", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "weekly-hours"] }
+          }
+        },
+        {
+          "name": "Set weekly hours (replace whole week)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"days\": [\n    { \"dayOfWeek\": 0, \"isClosed\": true,  \"intervals\": [] },\n    { \"dayOfWeek\": 1, \"isClosed\": false, \"intervals\": [ { \"start\": \"09:00\", \"end\": \"18:00\" } ] },\n    { \"dayOfWeek\": 2, \"isClosed\": false, \"intervals\": [ { \"start\": \"09:00\", \"end\": \"18:00\" } ] },\n    { \"dayOfWeek\": 3, \"isClosed\": false, \"intervals\": [ { \"start\": \"09:00\", \"end\": \"18:00\" } ] },\n    { \"dayOfWeek\": 4, \"isClosed\": false, \"intervals\": [ { \"start\": \"09:00\", \"end\": \"18:00\" } ] },\n    { \"dayOfWeek\": 5, \"isClosed\": false, \"intervals\": [ { \"start\": \"09:00\", \"end\": \"18:00\" } ] },\n    { \"dayOfWeek\": 6, \"isClosed\": false, \"intervals\": [ { \"start\": \"09:00\", \"end\": \"17:00\" } ] }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/weekly-hours", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "weekly-hours"] },
+            "description": "Exactly 7 entries; dayOfWeek 0=Sunday … 6=Saturday. Times are branch-local HH:mm (24h)."
+          }
+        },
+        {
+          "name": "Create date override (holiday / special day)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('overrideId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"date\": \"2026-09-27\",\n  \"isClosed\": true,\n  \"intervals\": []\n}" },
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/date-overrides", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "date-overrides"] },
+            "description": "isClosed:true blocks the whole branch-local date. With intervals, it replaces weekly hours for that date. 409 if an override exists for that date."
+          }
+        },
+        {
+          "name": "List date overrides",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/date-overrides?from=2026-09-01&to=2026-12-31&upcoming=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{businessId}}", "branches", "{{branchId}}", "date-overrides"],
+              "query": [
+                { "key": "from", "value": "2026-09-01", "disabled": true },
+                { "key": "to", "value": "2026-12-31", "disabled": true },
+                { "key": "upcoming", "value": "true", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update date override",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"isClosed\": false,\n  \"intervals\": [ { \"start\": \"10:00\", \"end\": \"15:00\" } ]\n}" },
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/date-overrides/{{overrideId}}", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "date-overrides", "{{overrideId}}"] }
+          }
+        },
+        {
+          "name": "Delete date override",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/date-overrides/{{overrideId}}", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "date-overrides", "{{overrideId}}"] }
+          }
+        },
+        {
+          "name": "Get booking config",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/booking-config", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "booking-config"] }
+          }
+        },
+        {
+          "name": "Update booking config",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"onlineBookingEnabled\": true,\n  \"walkInEnabled\": true,\n  \"bookingApprovalRequired\": false,\n  \"minimumAdvanceBookingMinutes\": 30,\n  \"maximumAdvanceBookingDays\": 60,\n  \"cancellationWindowMinutes\": 120,\n  \"reschedulingEnabled\": true,\n  \"bookingBufferMinutes\": 10,\n  \"waitlistEnabled\": false\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/{{businessId}}/branches/{{branchId}}/booking-config", "host": ["{{baseUrl}}"], "path": ["{{businessId}}", "branches", "{{branchId}}", "booking-config"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Customers",
+      "item": [
+        {
+          "name": "Match customer by phone (search)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{customerPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/customers/match", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "customers", "match"] },
+            "description": "Search only — returns `{ matched, customer }`. Walk-in flow step 1: search, and register if not found."
+          }
+        },
+        {
+          "name": "Create customer (register walk-in)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('customerId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Sara\",\n  \"lastName\": \"Bekele\",\n  \"phones\": [ { \"phone\": \"{{customerPhone}}\", \"isPrimary\": true } ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/customers", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "customers"] },
+            "description": "Only one phone may be isPrimary (400 MULTIPLE_PRIMARY_PHONES). Duplicate phone → 409."
+          }
+        },
+        {
+          "name": "List customers",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/customers?q=&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "customers"],
+              "query": [
+                { "key": "q", "value": "" },
+                { "key": "phone", "value": "", "disabled": true },
+                { "key": "status", "value": "ACTIVE", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get customer",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/customers/{{customerId}}", "host": ["{{baseUrl}}"], "path": ["customers", "{{customerId}}"] }
+          }
+        },
+        {
+          "name": "Update customer",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"firstName\": \"Sara\",\n  \"lastName\": \"B.\",\n  \"phones\": [ { \"phone\": \"+251911999888\", \"isPrimary\": true } ]\n}" },
+            "url": { "raw": "{{baseUrl}}/customers/{{customerId}}", "host": ["{{baseUrl}}"], "path": ["customers", "{{customerId}}"] }
+          }
+        },
+        {
+          "name": "Archive customer",
+          "request": {
+            "method": "PATCH",
+            "url": { "raw": "{{baseUrl}}/customers/{{customerId}}/archive", "host": ["{{baseUrl}}"], "path": ["customers", "{{customerId}}", "archive"] },
+            "description": "Soft delete — archived customers cannot book."
+          }
+        },
+        {
+          "name": "Add phone",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"+251911999888\",\n  \"isPrimary\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/customers/{{customerId}}/phones", "host": ["{{baseUrl}}"], "path": ["customers", "{{customerId}}", "phones"] }
+          }
+        },
+        {
+          "name": "Set primary phone",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/customers/{{customerId}}/phones/REPLACE_PHONE_ID/primary", "host": ["{{baseUrl}}"], "path": ["customers", "{{customerId}}", "phones", "REPLACE_PHONE_ID", "primary"] }
+          }
+        },
+        {
+          "name": "Delete phone",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/customers/{{customerId}}/phones/REPLACE_PHONE_ID", "host": ["{{baseUrl}}"], "path": ["customers", "{{customerId}}", "phones", "REPLACE_PHONE_ID"] }
+          }
+        },
+        {
+          "name": "Match-or-create customer (walk-in/phone combo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.customerId) {",
+                  "  pm.collectionVariables.set('customerId', body.data.customerId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{customerPhone}}\",\n  \"firstName\": \"Sara\",\n  \"lastName\": \"Bekele\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/match-customer", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "match-customer"] },
+            "description": "Find by phone, or create with the given names. Response: `{ customerId, isNew }`. Captured into customerId."
+          }
+        },
+        {
+          "name": "Match customer by phone only (lookup)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{customerPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/match-customer-phone", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "match-customer-phone"] },
+            "description": "Lookup only. `{ matched: true, customerId, customer }` or `{ matched: false }`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Availability",
+      "item": [
+        {
+          "name": "Get available slots (per day, staff filter optional)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const slots = body && body.data && body.data.availableSlots;",
+                  "if (slots && slots.length > 0) {",
+                  "  pm.collectionVariables.set('bookingStart', slots[0].startTime);",
+                  "  if (slots[0].staff && slots[0].staff.length > 0) {",
+                  "    pm.collectionVariables.set('staffId', slots[0].staff[0].id);",
+                  "  }",
+                  "  console.log('Captured bookingStart =', slots[0].startTime);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/availability?branchId={{branchId}}&serviceId={{serviceId}}&date={{availDate}}&staffId={{staffId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "availability"],
+              "query": [
+                { "key": "branchId", "value": "{{branchId}}" },
+                { "key": "serviceId", "value": "{{serviceId}}" },
+                { "key": "date", "value": "{{availDate}}", "description": "YYYY-MM-DD, interpreted in the branch timezone" },
+                { "key": "staffId", "value": "{{staffId}}", "disabled": true },
+                { "key": "source", "value": "PUBLIC", "disabled": true, "description": "PUBLIC (default, online policy) or INTERNAL (admin)" }
+              ]
+            },
+            "description": "Works without auth (optionalAuth). Slots merged across qualified staff by start time; each slot lists available staff. `startTime`/`serviceEndTime`/`reservedEndTime` are ISO with the branch UTC offset (+03:00).\n\nResponse `data.availableSlots[0].startTime` is captured into `bookingStart`."
+          }
+        },
+        {
+          "name": "Branch operating intervals for a date",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/branches/{{branchId}}/operating-intervals?date={{availDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "branches", "{{branchId}}", "operating-intervals"],
+              "query": [{ "key": "date", "value": "{{availDate}}" }]
+            }
+          }
+        },
+        {
+          "name": "Staff effective intervals for a date",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/branches/{{branchId}}/staff/{{staffId}}/effective-intervals?date={{availDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "branches", "{{branchId}}", "staff", "{{staffId}}", "effective-intervals"],
+              "query": [{ "key": "date", "value": "{{availDate}}" }]
+            }
+          }
+        },
+        {
+          "name": "Validate slot",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branchId\": \"{{branchId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"staffId\": \"{{staffId}}\",\n  \"startTime\": \"{{bookingStart}}\",\n  \"source\": \"PUBLIC\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/availability/validate", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "availability", "validate"] },
+            "description": "Always returns 200 with `{ valid, overrideAllowed, conflictType, reason }`. conflictType values: BRANCH_CLOSED, SERVICE_NOT_OFFERED, STAFF_INACTIVE, STAFF_NOT_QUALIFIED, STAFF_NOT_WORKING, STAFF_ON_BREAK, STAFF_TIME_OFF, SLOT_OUTSIDE_BRANCH_HOURS, SLOT_CONFLICT, MIN_ADVANCE_VIOLATION, MAX_ADVANCE_VIOLATION, INVALID_START_TIME, BUSINESS_INACTIVE."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Appointments — Admin",
+      "item": [
+        {
+          "name": "Create WALK-IN appointment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('appointmentId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branchId\": \"{{branchId}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"staffId\": \"{{staffId}}\",\n  \"scheduledStart\": \"{{bookingStart}}\",\n  \"notes\": \"Walk-in\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/walk-in", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "walk-in"] },
+            "description": "scheduledStart optional — defaults to now in branch timezone. Client scheduledEnd is ignored. Initial status: CHECKED_IN. Requires branch walkInEnabled."
+          }
+        },
+        {
+          "name": "Create PHONE/STAFF booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('appointmentId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branchId\": \"{{branchId}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"staffId\": \"{{staffId}}\",\n  \"scheduledStart\": \"{{bookingStart}}\",\n  \"bookingSource\": \"PHONE\",\n  \"notes\": \"Booked over the phone\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/staff-booking", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "staff-booking"] },
+            "description": "bookingSource: STAFF | PHONE. Initial status CONFIRMED. If the service has a deposit policy, add paymentMethodId + amount (+paymentReference) or the request fails 400."
+          }
+        },
+        {
+          "name": "Create ONLINE appointment (customer, authenticated)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('appointmentId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branchId\": \"{{branchId}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"staffId\": \"{{staffId}}\",\n  \"scheduledStart\": \"{{bookingStart}}\",\n  \"bookingSource\": \"ONLINE\",\n  \"notes\": \"Booked from the web app\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments"] },
+            "description": "Online booking source. Initial status CONFIRMED, or PENDING when deposit/approval is required."
+          }
+        },
+        {
+          "name": "Get appointment",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}"] }
+          }
+        },
+        {
+          "name": "List appointments (filters)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "appointments"],
+              "query": [
+                { "key": "branchId", "value": "{{branchId}}", "disabled": true },
+                { "key": "customerId", "value": "{{customerId}}", "disabled": true },
+                { "key": "serviceId", "value": "{{serviceId}}", "disabled": true },
+                { "key": "staffId", "value": "{{staffId}}", "disabled": true },
+                { "key": "status", "value": "CONFIRMED", "disabled": true, "description": "PENDING | CONFIRMED | CHECKED_IN | IN_PROGRESS | COMPLETED | CANCELLED | NO_SHOW | EXPIRED" },
+                { "key": "bookingSource", "value": "WALK_IN", "disabled": true, "description": "ONLINE | STAFF | PHONE | WALK_IN" },
+                { "key": "startDate", "value": "2026-09-23T00:00:00.000Z", "disabled": true },
+                { "key": "endDate", "value": "2026-09-30T23:59:59.000Z", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update notes",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Customer prefers short sides\",\n  \"internalNotes\": \"VIP customer\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}"] },
+            "description": "Notes-only update in current code. Reschedule/staff/status have dedicated endpoints."
+          }
+        },
+        {
+          "name": "Reschedule (admin, for the customer)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"newStartTime\": \"2026-09-25T15:00:00.000+03:00\",\n  \"reason\": \"Customer called to move it later\",\n  \"staffId\": \"{{staffId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/reschedule", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "reschedule"] },
+            "description": "newStartTime required (ISO 8601). staffId optional — moves to another qualified staff. 409 on conflict; 400 for terminal statuses."
+          }
+        },
+        {
+          "name": "Change booked service",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"serviceId\": \"{{serviceId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/service", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "service"] }
+          }
+        },
+        {
+          "name": "Status → CHECKED_IN (customer arrived)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"CHECKED_IN\",\n  \"reason\": \"Customer arrived\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/status", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "status"] },
+            "description": "State machine: PENDING→CONFIRMED|CANCELLED|EXPIRED; CONFIRMED→CHECKED_IN|CANCELLED|NO_SHOW; CHECKED_IN→IN_PROGRESS|CANCELLED|NO_SHOW; IN_PROGRESS→COMPLETED|CANCELLED."
+          }
+        },
+        {
+          "name": "Status → IN_PROGRESS",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/status", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "status"] }
+          }
+        },
+        {
+          "name": "Extend (work takes longer)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"extensionMinutes\": 30,\n  \"reason\": \"Customer added a beard trim\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/extend", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "extend"] },
+            "description": "IN_PROGRESS only. Widens the staff busy window; scheduledStart/End never change. 409 if it overlaps the staff's next appointment."
+          }
+        },
+        {
+          "name": "Status → COMPLETED (early release with actualEnd)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"COMPLETED\",\n  \"actualEnd\": \"2026-09-23T12:05:00.000+03:00\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/status", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "status"] },
+            "description": "actualEnd optional — defaults to now. Must be after scheduledStart. Releases the staff early; scheduled times untouched."
+          }
+        },
+        {
+          "name": "Mark NO-SHOW",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Customer did not show up\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/no-show", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "no-show"] },
+            "description": "Only CONFIRMED appointments can become NO_SHOW."
+          }
+        },
+        {
+          "name": "Cancel (with refund request)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Customer can't make it\",\n  \"refund\": true,\n  \"refundAmount\": 200\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/cancel", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "cancel"] },
+            "description": "refund:true creates a PENDING RefundRequest for refundAmount (defaults to the full PAID amount; capped at paid total)."
+          }
+        },
+        {
+          "name": "Assign / reassign staff",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"staffId\": \"{{staffId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/staff", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "staff"] },
+            "description": "Replaces the assignment. New staff must be active, in the branch, qualified, and slot-free (409 otherwise)."
+          }
+        },
+        {
+          "name": "Unassign staff (blocked in current code)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/appointments/{{appointmentId}}/staff", "host": ["{{baseUrl}}"], "path": ["appointments", "{{appointmentId}}", "staff"] },
+            "description": "Always 400: appointments must have exactly one staff member — reassign instead. Early release = complete with actualEnd."
+          }
+        },
+        {
+          "name": "Confirm attendance manually",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/confirm-attendance", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "confirm-attendance"] },
+            "description": "Staff manually confirms the customer showed up. 400 if already confirmed."
+          }
+        },
+        {
+          "name": "Get status history",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/appointments/{{appointmentId}}/status-history", "host": ["{{baseUrl}}"], "path": ["appointments", "{{appointmentId}}", "status-history"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Service Usage",
+      "item": [
+        {
+          "name": "Add service usage",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('usageId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": \"{{serviceId}}\",\n  \"serviceName\": \"Haircut + Beard\",\n  \"serviceDetails\": \"Scissor cut, fade, beard shaping\",\n  \"productsUsed\": [ { \"name\": \"Argan Oil\", \"quantity\": 2, \"unit\": \"ml\" } ],\n  \"notes\": \"Customer prefers short sides\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/service-usages", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "service-usages"] },
+            "description": "Recorded after service delivery. Appointment must be CHECKED_IN, IN_PROGRESS or COMPLETED (400 otherwise)."
+          }
+        },
+        {
+          "name": "List service usages",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/service-usages", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "service-usages"] }
+          }
+        },
+        {
+          "name": "Update service usage",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"serviceName\": \"Haircut + Beard + Wash\",\n  \"productsUsed\": [ { \"name\": \"Argan Oil\", \"quantity\": 3, \"unit\": \"ml\" } ]\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/service-usages/{{usageId}}", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "service-usages", "{{usageId}}"] }
+          }
+        },
+        {
+          "name": "Delete service usage",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/service-usages/{{usageId}}", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "service-usages", "{{usageId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Appointment Payments",
+      "item": [
+        {
+          "name": "List payment methods (business)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/payment-methods?active=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "payment-methods"],
+              "query": [{ "key": "active", "value": "true", "disabled": true }]
+            }
+          }
+        },
+        {
+          "name": "Create payment method",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('paymentMethodId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Telebirr\",\n  \"type\": \"MOBILE_MONEY\",\n  \"accountName\": \"Z Salon\",\n  \"accountNumber\": \"+251900000000\",\n  \"instructions\": \"Send to this number and upload the receipt\",\n  \"isActive\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/payment-methods", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "payment-methods"] }
+          }
+        },
+        {
+          "name": "Record payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('paymentId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"amount\": 400,\n  \"reference\": \"CBE-TXN-88123\",\n  \"notes\": \"Paid at counter\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/payments", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "payments"] },
+            "description": "Creates an AppointmentPayment with status PAID. amount must be > 0; method must be active and belong to the business."
+          }
+        },
+        {
+          "name": "List payments for appointment",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/payments", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "payments"] }
+          }
+        },
+        {
+          "name": "Void payment",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Entered wrong amount\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/payments/{{paymentId}}/void", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "payments", "{{paymentId}}", "void"] },
+            "description": "Reason required. Only PAID payments can be voided."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Payment Receipts (review)",
+      "item": [
+        {
+          "name": "Public payment methods (customer view)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/payment-methods/public", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "payment-methods", "public"] },
+            "description": "Active methods with account name/number + instructions. Requires auth but not membership."
+          }
+        },
+        {
+          "name": "List pending receipts (admin queue)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/receipts/pending?branchId={{branchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "receipts", "pending"],
+              "query": [{ "key": "branchId", "value": "{{branchId}}", "disabled": true }]
+            }
+          }
+        },
+        {
+          "name": "Get receipt for appointment",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/receipt", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "receipt"] }
+          }
+        },
+        {
+          "name": "Verify receipt — APPROVE",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"APPROVE\",\n  \"verifiedAmount\": 400\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/receipt/verify", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "receipt", "verify"] },
+            "description": "Approves the PENDING receipt, records a PAID AppointmentPayment (reference 'Receipt: <id>') and auto-confirms a PENDING appointment."
+          }
+        },
+        {
+          "name": "Verify receipt — REJECT",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"REJECT\",\n  \"rejectionReason\": \"Amount does not match the transfer\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/receipt/verify", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "receipt", "verify"] },
+            "description": "rejectionReason required for REJECT."
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Refunds",
+      "item": [
+        {
+          "name": "List refund requests",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests?status=PENDING&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests"],
+              "query": [
+                { "key": "status", "value": "PENDING", "description": "PENDING | APPROVED | REJECTED" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get refund request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body && body.data && body.data.id) {",
+                  "  pm.collectionVariables.set('refundRequestId', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}"] }
+          }
+        },
+        {
+          "name": "Approve refund",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}/approve", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}", "approve"] },
+            "description": "Idempotent. Sets approvedAmount = requestedAmount and notifies the customer. Rejected requests cannot be approved (400)."
+          }
+        },
+        {
+          "name": "Reject refund",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"rejectionReason\": \"Service was already fully delivered\"\n}" },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}/reject", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}", "reject"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Customer Appointments (customer side)",
+      "description": "The authenticated user must be linked to a Customer record via matching phone numbers. All routes are under /customer.",
+      "item": [
+        {
+          "name": "List my appointments",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/customer/appointments?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["customer", "appointments"],
+              "query": [
+                { "key": "status", "value": "CONFIRMED", "disabled": true },
+                { "key": "startDate", "value": "2026-09-01T00:00:00.000Z", "disabled": true },
+                { "key": "endDate", "value": "2026-09-30T23:59:59.000Z", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get my appointment",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/customer/appointments/{{appointmentId}}", "host": ["{{baseUrl}}"], "path": ["customer", "appointments", "{{appointmentId}}"] }
+          }
+        },
+        {
+          "name": "Reschedule my appointment",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"newStartTime\": \"2026-09-25T16:00:00.000+03:00\",\n  \"reason\": \"Work meeting\"\n}" },
+            "url": { "raw": "{{baseUrl}}/customer/appointments/{{appointmentId}}/reschedule", "host": ["{{baseUrl}}"], "path": ["customer", "appointments", "{{appointmentId}}", "reschedule"] },
+            "description": "Requires branch reschedulingEnabled=true and respect for advance-booking windows. 409 if the slot conflicts."
+          }
+        },
+        {
+          "name": "Cancel my appointment (may create refund request)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Something came up\"\n}" },
+            "url": { "raw": "{{baseUrl}}/customer/appointments/{{appointmentId}}/cancel", "host": ["{{baseUrl}}"], "path": ["customer", "appointments", "{{appointmentId}}", "cancel"] },
+            "description": "Requires customerCancellationEnabled=true. Blocked inside cancellationWindowMinutes. If PAID money exists and the policy (ALWAYS / BEFORE_DEADLINE + refundDeadlineHours) allows, a PENDING RefundRequest is created for the admin queue."
+          }
+        },
+        {
+          "name": "My appointment history",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/customer/appointments/{{appointmentId}}/history", "host": ["{{baseUrl}}"], "path": ["customer", "appointments", "{{appointmentId}}", "history"] }
+          }
+        },
+        {
+          "name": "Submit payment receipt",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  console.log('Receipt submitted — admin reviews under 7. Payment Receipts (review)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"submittedAmount\": 400,\n  \"receiptImageUrl\": \"https://res.cloudinary.com/demo/image/upload/sample.jpg\",\n  \"receiptImagePublicId\": \"sample\",\n  \"customerNote\": \"Sent via Telebirr\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/customer/appointments/{{appointmentId}}/receipt", "host": ["{{baseUrl}}"], "path": ["customer", "appointments", "{{appointmentId}}", "receipt"] },
+            "description": "Only for PENDING appointments; one active (PENDING/APPROVED) receipt per appointment (409 otherwise)."
+          }
+        },
+        {
+          "name": "Get my receipt status",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/customer/appointments/{{appointmentId}}/receipt", "host": ["{{baseUrl}}"], "path": ["customer", "appointments", "{{appointmentId}}", "receipt"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Public Booking (no account, OTP)",
+      "item": [
+        {
+          "name": "Public booking (uses OTP verificationToken)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationToken\": \"{{verificationToken}}\",\n  \"firstName\": \"Sara\",\n  \"lastName\": \"Bekele\",\n  \"phone\": \"+251912345678\",\n  \"branchId\": \"{{branchId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"staffId\": \"{{staffId}}\",\n  \"scheduledStart\": \"{{bookingStart}}\",\n  \"notes\": \"Window seat please\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/public/businesses/{{businessId}}/bookings", "host": ["{{baseUrl}}"], "path": ["public", "businesses", "{{businessId}}", "bookings"] },
+            "description": "Run 0. Auth › OTP request + verify first. Token purpose must be PHONE_VERIFICATION and match the phone. Find-or-creates the customer. Initial status PENDING (deposit/approval) or CONFIRMED."
+          }
+        },
+        {
+          "name": "Submit receipt for pending public booking",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethodId\": \"{{paymentMethodId}}\",\n  \"submittedAmount\": 400,\n  \"receiptImageUrl\": \"https://res.cloudinary.com/demo/image/upload/sample.jpg\",\n  \"receiptImagePublicId\": \"sample\",\n  \"customerNote\": \"Transfer done\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/public/businesses/{{businessId}}/appointments/{{appointmentId}}/payment-receipts", "host": ["{{baseUrl}}"], "path": ["public", "businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "payment-receipts"] }
+          }
+        },
+        {
+          "name": "Confirmation link — view (SMS token)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/public/appointments/confirm/REPLACE_SMS_TOKEN", "host": ["{{baseUrl}}"], "path": ["public", "appointments", "confirm", "REPLACE_SMS_TOKEN"] }
+          }
+        },
+        {
+          "name": "Confirmation link — confirm",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{baseUrl}}/public/appointments/confirm/REPLACE_SMS_TOKEN/confirm", "host": ["{{baseUrl}}"], "path": ["public", "appointments", "confirm", "REPLACE_SMS_TOKEN", "confirm"] }
+          }
+        },
+        {
+          "name": "Confirmation link — cancel",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Cannot come\"\n}" },
+            "url": { "raw": "{{baseUrl}}/public/appointments/confirm/REPLACE_SMS_TOKEN/cancel", "host": ["{{baseUrl}}"], "path": ["public", "appointments", "confirm", "REPLACE_SMS_TOKEN", "cancel"] }
+          }
+        },
+        {
+          "name": "Confirmation link — reschedule",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"newStartTime\": \"2026-09-26T10:00:00.000+03:00\"\n}" },
+            "url": { "raw": "{{baseUrl}}/public/appointments/confirm/REPLACE_SMS_TOKEN/reschedule", "host": ["{{baseUrl}}"], "path": ["public", "appointments", "confirm", "REPLACE_SMS_TOKEN", "reschedule"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Feedback (private MVP)",
+      "item": [
+        {
+          "name": "Get feedback form (token, no auth)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/feedback/{{feedbackToken}}", "host": ["{{baseUrl}}"], "path": ["feedback", "{{feedbackToken}}"] },
+            "description": "The raw token from the customer's SMS link is the authorization mechanism. Only enabled categories are returned. 404 unknown token · 410 expired · 409 already submitted or appointment not COMPLETED."
+          }
+        },
+        {
+          "name": "Submit feedback (token, no auth)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{feedbackToken}}\",\n  \"is_anonymous\": false,\n  \"responses\": [\n    { \"category_id\": \"REPLACE_CATEGORY_ID\", \"rating_value\": 5 },\n    { \"category_id\": \"REPLACE_CATEGORY_ID\", \"text_response\": \"Great service!\" },\n    { \"category_id\": \"REPLACE_CATEGORY_ID\", \"boolean_response\": true }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/feedback/submit", "host": ["{{baseUrl}}"], "path": ["feedback", "submit"] },
+            "description": "One answer per category; response type must match the category type (RATING/TEXT/BOOLEAN). Single-use token — a second submit returns 409."
+          }
+        },
+        {
+          "name": "List feedback (OWNER/ADMIN)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/feedback?page=1&limit=20", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "feedback"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "20" }] },
+            "description": "Optional query filters: from_date, to_date, branch_id, category_id, is_anonymous. Anonymous items return customer: null and appointment: null. BRANCH_MANAGER and STAFF get 403."
+          }
+        },
+        {
+          "name": "Feedback detail (OWNER/ADMIN)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/feedback/REPLACE_SUBMISSION_ID", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "feedback", "REPLACE_SUBMISSION_ID"] },
+            "description": "Records a FEEDBACK_VIEWED audit event (no customer identity in metadata)."
+          }
+        },
+        {
+          "name": "Create feedback category (OWNER/ADMIN)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Service Quality\",\n  \"type\": \"RATING\",\n  \"ratingScaleMin\": 1,\n  \"ratingScaleMax\": 5,\n  \"description\": \"Rate the quality of the service\",\n  \"sortOrder\": 1\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/feedback-categories", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "feedback-categories"] },
+            "description": "RATING requires integer ratingScaleMin < ratingScaleMax within 0..10; TEXT/BOOLEAN require the scale to be null. Names are unique per business."
+          }
+        },
+        {
+          "name": "List feedback categories (OWNER/ADMIN)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/businesses/{{businessId}}/feedback-categories", "host": ["{{baseUrl}}"], "path": ["businesses", "{{businessId}}", "feedback-categories"] },
+            "description": "Includes disabled categories and response_count per category."
+          }
+        },
+        {
+          "name": "Update feedback category (OWNER/ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isEnabled\": false\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/feedback-categories/REPLACE_CATEGORY_ID", "host": ["{{baseUrl}}"], "path": ["feedback-categories", "REPLACE_CATEGORY_ID"] },
+            "description": "Update name/description/sortOrder or disable. No delete. Type/scale become immutable once a category has responses (409 FEEDBACK_CATEGORY_IMMUTABLE)."
+          }
+        }
+      ]
+    }
+  ]
+}

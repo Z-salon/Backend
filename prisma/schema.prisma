@@ -147,6 +147,9 @@ model Business {
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
   owner_id  String
+
+  // Feedback MVP: master switch for generating feedback requests/notifications
+  feedbackEnabled Boolean @default(true)
   user      User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
   // Branding
@@ -185,6 +188,8 @@ model Business {
   paymentReceipts     PaymentReceipt[]
   serviceUsages       ServiceUsage[]
   appointmentPayments AppointmentPayment[]
+  feedbackCategories  FeedbackCategory[]
+  feedbackRequests    FeedbackRequest[]
 
   @@index([status])
   @@index([slug])
@@ -859,9 +864,10 @@ model Customer {
   business  Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   createdBy User?    @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
-  phones          CustomerPhone[]
-  appointments    Appointment[]
-  paymentReceipts PaymentReceipt[]
+  phones           CustomerPhone[]
+  appointments     Appointment[]
+  paymentReceipts  PaymentReceipt[]
+  feedbackRequests FeedbackRequest[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -961,6 +967,7 @@ model Appointment {
   serviceUsages      ServiceUsage[]
   paymentReceipts    PaymentReceipt[]
   payments           AppointmentPayment[]
+  feedbackRequest    FeedbackRequest?
 
   @@index([businessId])
   @@index([branchId])
@@ -1189,4 +1196,111 @@ model ServiceUsage {
   @@index([branchId])
   @@index([serviceId])
   @@index([recordedById])
+}
+
+// ==========================================================
+// Feedback MVP
+// ==========================================================
+
+enum FeedbackCategoryType {
+  RATING
+  TEXT
+  BOOLEAN
+}
+
+enum FeedbackRequestStatus {
+  PENDING
+  SUBMITTED
+  EXPIRED
+}
+
+/// A business-defined question/answer dimension for customer feedback.
+/// Categories are never deleted; they are disabled so historical responses stay valid.
+model FeedbackCategory {
+  id          String               @id @default(uuid())
+  businessId  String
+  name        String
+  description String?
+  type        FeedbackCategoryType
+
+  // Only meaningful for RATING categories; null for TEXT and BOOLEAN.
+  ratingScaleMin Int?
+  ratingScaleMax Int?
+
+  isEnabled Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  responses FeedbackResponse[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@index([businessId, isEnabled])
+  @@index([businessId, sortOrder])
+}
+
+/// A single-use, tokenised invitation to submit feedback for one completed appointment.
+/// Only the SHA-256 hash of the raw customer token is ever stored.
+model FeedbackRequest {
+  id            String                @id @default(uuid())
+  businessId    String
+  appointmentId String                @unique
+  customerId    String
+  tokenHash     String                @unique
+  sentAt        DateTime?
+  expiresAt     DateTime
+  status        FeedbackRequestStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  appointment Appointment         @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  customer    Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  submission  FeedbackSubmission?
+
+  @@index([businessId])
+  @@index([appointmentId])
+  @@index([customerId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+/// One completed customer feedback form. Exactly one submission per request.
+model FeedbackSubmission {
+  id                String   @id @default(uuid())
+  feedbackRequestId String   @unique
+  isAnonymous       Boolean  @default(false)
+  submittedAt       DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  feedbackRequest FeedbackRequest    @relation(fields: [feedbackRequestId], references: [id], onDelete: Cascade)
+  responses       FeedbackResponse[]
+
+  @@index([feedbackRequestId])
+  @@index([isAnonymous])
+  @@index([submittedAt])
+}
+
+/// A single answer to one category within a submission.
+model FeedbackResponse {
+  id                   String  @id @default(uuid())
+  feedbackSubmissionId String
+  feedbackCategoryId   String
+  ratingValue          Int?
+  textResponse         String?
+  booleanResponse      Boolean?
+
+  createdAt DateTime @default(now())
+
+  feedbackSubmission FeedbackSubmission @relation(fields: [feedbackSubmissionId], references: [id], onDelete: Cascade)
+  feedbackCategory   FeedbackCategory   @relation(fields: [feedbackCategoryId], references: [id], onDelete: Restrict)
+
+  @@unique([feedbackSubmissionId, feedbackCategoryId])
+  @@index([feedbackSubmissionId])
+  @@index([feedbackCategoryId])
 }
