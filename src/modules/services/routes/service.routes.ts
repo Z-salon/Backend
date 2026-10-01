@@ -78,6 +78,11 @@ router.get(
   serviceController.getServices
 );
 
+router.get(
+  '/public/businesses/:businessId/services',
+  serviceController.getServices
+);
+
 // Direct service routes
 /**
  * @openapi
@@ -96,6 +101,11 @@ router.get(
 router.get(
   '/services/:serviceId',
   authenticate,
+  serviceController.getServiceById
+);
+
+router.get(
+  '/public/services/:serviceId',
   serviceController.getServiceById
 );
 
