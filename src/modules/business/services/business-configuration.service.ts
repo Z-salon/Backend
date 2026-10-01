@@ -198,6 +198,11 @@ export class BusinessConfigurationService {
     }
 
     return {
+      id: business.id,
+      name: business.name,
+      slug: business.slug,
+      currency: business.currency,
+      timezone: business.timezone,
       logo: business.logoUrl ? { url: business.logoUrl, publicId: business.logoPublicId || '' } : null,
       cover: business.coverImageUrl ? { url: business.coverImageUrl, publicId: business.coverImagePublicId || '' } : null,
       primaryColor: business.primaryColor ?? null,
