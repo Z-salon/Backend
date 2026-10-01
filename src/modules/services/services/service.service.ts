@@ -346,6 +346,96 @@ export class ServiceService {
     return service;
   }
 
+  async getPublicServices(
+    businessId: string,
+    opts: { branchId?: string; categoryId?: string } = {},
+  ): Promise<any[]> {
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true, status: true },
+    });
+
+    if (!business) {
+      throw new ApiError(404, 'Business not found', ErrorCodes.BUSINESS_NOT_FOUND);
+    }
+    // Don't reveal that a suspended business exists.
+    if (business.status !== 'ACTIVE') return [];
+
+    const services = await prisma.service.findMany({
+      where: {
+        businessId,
+        status: 'ACTIVE',
+        category: { status: 'ACTIVE' },
+        ...(opts.categoryId ? { categoryId: opts.categoryId } : {}),
+        branchAssignments: {
+          some: {
+            isActive: true,
+            branch: { isActive: true },
+            ...(opts.branchId ? { branchId: opts.branchId } : {}),
+          },
+        },
+      },
+      include: {
+        category: { select: { id: true, name: true, status: true } },
+      },
+      orderBy: [{ categoryId: 'asc' }, { name: 'asc' }],
+    });
+
+    // Public projection — strip member-only internals, Decimal → string.
+    return services.map(s => ({
+      id: s.id,
+      businessId: s.businessId,
+      categoryId: s.categoryId,
+      name: s.name,
+      description: s.description,
+      durationMinutes: s.durationMinutes,
+      price: s.price.toString(),
+      employeeAssignmentMode: s.employeeAssignmentMode,
+      showPriceToCustomer: s.showPriceToCustomer,
+      depositPolicyType: s.depositPolicyType,
+      depositAmount: s.depositAmount ? s.depositAmount.toString() : null,
+      status: s.status,
+      category: s.category,
+    }));
+  }
+
+  async getPublicServiceById(serviceId: string): Promise<any> {
+    const service = await prisma.service.findFirst({
+      where: {
+        id: serviceId,
+        status: 'ACTIVE',
+        category: { status: 'ACTIVE' },
+        business: { status: 'ACTIVE' },
+        branchAssignments: {
+          some: { isActive: true, branch: { isActive: true } },
+        },
+      },
+      include: {
+        category: { select: { id: true, name: true, status: true } },
+      },
+    });
+
+    if (!service) {
+      throw new ApiError(404, 'Service not found', ErrorCodes.NOT_FOUND);
+    }
+
+    return {
+      id: service.id,
+      businessId: service.businessId,
+      categoryId: service.categoryId,
+      name: service.name,
+      description: service.description,
+      durationMinutes: service.durationMinutes,
+      price: service.price.toString(),
+      employeeAssignmentMode: service.employeeAssignmentMode,
+      showPriceToCustomer: service.showPriceToCustomer,
+      depositPolicyType: service.depositPolicyType,
+      depositAmount: service.depositAmount ? service.depositAmount.toString() : null,
+      status: service.status,
+      category: service.category,
+    };
+  }
+
   async updateService(serviceId: string, userId: string, input: UpdateServiceInput) {
     const service = await prisma.service.findUnique({
       where: { id: serviceId },

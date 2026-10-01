@@ -80,7 +80,7 @@ router.get(
 
 router.get(
   '/public/businesses/:businessId/services',
-  serviceController.getServices
+  serviceController.getPublicServices
 );
 
 // Direct service routes
@@ -106,7 +106,7 @@ router.get(
 
 router.get(
   '/public/services/:serviceId',
-  serviceController.getServiceById
+  serviceController.getPublicServiceById
 );
 
 /**

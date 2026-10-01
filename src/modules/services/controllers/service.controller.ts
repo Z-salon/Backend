@@ -43,6 +43,41 @@ export class ServiceController {
     }
   }
 
+  /**
+   * Public listing. No auth, no membership. Only ACTIVE services in
+   * ACTIVE categories, only those with an active branch assignment.
+   * Query: branchId?, categoryId? — `status` is ignored (always ACTIVE).
+   */
+  async getPublicServices(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId } = req.params;
+      const { branchId, categoryId } = req.query;
+
+      const result = await serviceService.getPublicServices(businessId, {
+        branchId: branchId as string | undefined,
+        categoryId: categoryId as string | undefined,
+      });
+
+      res.status(200).json(successResponse('Services retrieved successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Public single-service fetch. No auth. 404 if the service doesn't
+   * exist, isn't ACTIVE, or its business/category isn't ACTIVE.
+   */
+  async getPublicServiceById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { serviceId } = req.params;
+      const result = await serviceService.getPublicServiceById(serviceId);
+      res.status(200).json(successResponse('Service details retrieved successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateService(req: Request, res: Response, next: NextFunction) {
     try {
       const serviceId = req.params.serviceId;
