@@ -144,6 +144,7 @@ export const businessUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   currency: z.string().length(3).optional(),
   timezone: z.string().optional(),
+  feedbackEnabled: z.boolean().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
   message: 'At least one field must be provided for update',
 });

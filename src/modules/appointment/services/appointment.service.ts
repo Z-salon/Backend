@@ -18,6 +18,7 @@ import {
 import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignmentMode, CustomerConfirmationStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { sendAppointmentConfirmationSms } from '../../auth/sms/sms.service';
+import { feedbackRequestService } from '../../feedback/services/feedback-request.service';
 
 /** Upper bound for a single operational extension (8 hours). */
 const MAX_APPOINTMENT_EXTENSION_MINUTES = 480;
@@ -699,6 +700,20 @@ export class AppointmentService {
 
       return updated;
     });
+
+    // Feedback generation is a best-effort side effect of completion. It runs
+    // after the appointment transaction has committed and must never change the
+    // appointment's state or fail the transition.
+    if (status === AppointmentStatus.COMPLETED) {
+      await feedbackRequestService
+        .generateFeedbackRequest(appointmentId, userId)
+        .catch((error: unknown) => {
+          console.error(
+            `Failed to generate feedback request for appointment ${appointmentId}:`,
+            error instanceof Error ? error.message : error
+          );
+        });
+    }
 
     return this.mapToResponse(updated);
   }

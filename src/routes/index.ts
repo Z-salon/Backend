@@ -17,6 +17,8 @@ import customerAppointmentRoutes from '../modules/customer/routes/customer-appoi
 import publicBookingRoutes from '../modules/appointment/routes/public-booking.routes';
 import customerConfirmationRoutes from '../modules/appointment/routes/customer-confirmation.routes';
 import refundRequestRoutes from '../modules/payment/routes/refund-request.routes';
+import publicFeedbackRoutes from '../modules/feedback/routes/public-feedback.routes';
+import adminFeedbackRoutes from '../modules/feedback/routes/admin-feedback.routes';
 import { config } from '../config/env';
 
 const router = Router();
@@ -39,6 +41,8 @@ router.use(`/customer`, customerAppointmentRoutes);
 router.use(`/public`, publicBookingRoutes);
 router.use(`/public`, customerConfirmationRoutes);
 router.use(`/`, refundRequestRoutes);
+router.use(`/feedback`, publicFeedbackRoutes);
+router.use(`/`, adminFeedbackRoutes);
 
 /**
  * @openapi

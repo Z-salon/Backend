@@ -104,3 +104,18 @@ export async function sendRefundRejectedSms(
 export function buildConfirmationUrl(frontendBaseUrl: string, token: string): string {
   return `${frontendBaseUrl}/appointments/confirm/${token}`;
 }
+
+/**
+ * Notify a customer that they can leave feedback for a completed appointment.
+ * Best-effort: callers must never let a failure here affect appointment state.
+ */
+export async function sendFeedbackRequestSms(
+  phone: string,
+  feedbackUrl: string
+): Promise<void> {
+  const provider = getSmsProvider();
+  await provider.sendMessage(
+    phone,
+    `Thank you for visiting us! We'd love to hear your feedback: ${feedbackUrl}`
+  );
+}

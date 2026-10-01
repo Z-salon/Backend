@@ -7,6 +7,7 @@ export interface BusinessUpdateInput {
   name?: string;
   currency?: string;
   timezone?: string;
+  feedbackEnabled?: boolean;
 }
 
 export interface BrandingUpdateInput {
@@ -30,6 +31,7 @@ export interface BusinessResponse {
   currency: string;
   timezone: string;
   status: string;
+  feedbackEnabled: boolean;
   logoUrl: string | null;
   coverImageUrl: string | null;
   primaryColor: string | null;
@@ -48,7 +50,7 @@ export interface BusinessResponse {
   updatedAt: Date;
 }
 
-const ALLOWED_BUSINESS_UPDATE_FIELDS = ['name', 'currency', 'timezone'];
+const ALLOWED_BUSINESS_UPDATE_FIELDS = ['name', 'currency', 'timezone', 'feedbackEnabled'];
 const ALLOWED_BRANDING_FIELDS = [
   'primaryColor',
   'secondaryColor',
@@ -463,6 +465,7 @@ export class BusinessConfigurationService {
       currency: business.currency,
       timezone: business.timezone,
       status: business.status,
+      feedbackEnabled: business.feedbackEnabled,
       // Provide branch information if loaded
       ...(business.branches && business.branches.length > 0 ? {
         branch: {
