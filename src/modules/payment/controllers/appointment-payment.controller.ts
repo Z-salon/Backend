@@ -7,7 +7,20 @@ export class AppointmentPaymentController {
     try {
       const { businessId, id: appointmentId } = req.params;
       const recordedById = req.auth!.userId;
-      const { paymentMethodId, amount, reference, notes } = req.body;
+      const { paymentMethodId, amount, reference, notes, payments } = req.body;
+
+      // Multiple payment methods: [{ paymentMethodId, amount }, ...]
+      if (Array.isArray(payments) && payments.length > 0) {
+        const created = await appointmentPaymentService.createPayments(
+          appointmentId,
+          businessId,
+          recordedById,
+          { payments, reference, notes }
+        );
+
+        res.status(201).json(successResponse('Payments recorded successfully', created));
+        return;
+      }
 
       const payment = await appointmentPaymentService.createPayment(
         appointmentId,

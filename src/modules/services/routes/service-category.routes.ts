@@ -9,6 +9,7 @@ import {
   assignCategoryBranchSchema,
   updateCategoryBranchAssignmentSchema,
   createSampleWorkSchema,
+  updateSampleWorkSchema,
 } from '../validation/service.schemas';
 
 const router = Router();
@@ -241,6 +242,82 @@ router.post(
   authenticate,
   bodyValidator(createSampleWorkSchema),
   serviceCategoryController.addSampleWork.bind(serviceCategoryController)
+);
+
+/**
+ * @openapi
+ * /api/v1/service-categories/{categoryId}/sample-works:
+ *   get:
+ *     tags: [Service Categories]
+ *     summary: List sample works for a category
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: categoryId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Sample works retrieved successfully }
+ *       401: { description: Authentication required }
+ *       403: { description: Access denied to this category }
+ *       404: { description: Service category not found }
+ */
+router.get(
+  '/service-categories/:categoryId/sample-works',
+  authenticate,
+  serviceCategoryController.getSampleWorks.bind(serviceCategoryController)
+);
+
+/**
+ * @openapi
+ * /api/v1/sample-works/{sampleWorkId}:
+ *   get:
+ *     tags: [Service Categories]
+ *     summary: Get a sample work
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: sampleWorkId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Sample work retrieved successfully }
+ *       401: { description: Authentication required }
+ *       403: { description: Access denied to this sample work }
+ *       404: { description: Sample work not found }
+ */
+router.get(
+  '/sample-works/:sampleWorkId',
+  authenticate,
+  serviceCategoryController.getSampleWorkById.bind(serviceCategoryController)
+);
+
+/**
+ * @openapi
+ * /api/v1/sample-works/{sampleWorkId}:
+ *   patch:
+ *     tags: [Service Categories]
+ *     summary: Update a sample work
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: sampleWorkId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string, maxLength: 250 }
+ *               url: { type: string, format: uri }
+ *               publicId: { type: string }
+ *               description: { type: string, nullable: true }
+ *     responses:
+ *       200: { description: Sample work updated successfully }
+ *       400: { description: Invalid input }
+ *       401: { description: Authentication required }
+ *       403: { description: Insufficient permissions }
+ *       404: { description: Sample work not found }
+ */
+router.patch(
+  '/sample-works/:sampleWorkId',
+  authenticate,
+  bodyValidator(updateSampleWorkSchema),
+  serviceCategoryController.updateSampleWork.bind(serviceCategoryController)
 );
 
 /**

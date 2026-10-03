@@ -31,6 +31,13 @@ export const createSampleWorkSchema = z.object({
   description: z.string().max(1000).optional(),
 });
 
+export const updateSampleWorkSchema = z.object({
+  name: z.string().min(1, 'Name cannot be empty').max(250).trim().optional(),
+  url: z.string().url('Invalid URL').optional(),
+  publicId: z.string().min(1).optional(),
+  description: z.string().max(1000).nullable().optional(),
+});
+
 export const createServiceSchema = z.object({
   categoryId: z.string({ required_error: 'Category ID is required' }).uuid('Invalid category ID'),
   name: z.string({ required_error: 'Service name is required' }).min(1, 'Service name cannot be empty').max(250).trim(),

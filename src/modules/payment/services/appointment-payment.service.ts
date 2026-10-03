@@ -80,6 +80,98 @@ export class AppointmentPaymentService {
   }
 
   /**
+   * Record an appointment payment split across one or more payment methods.
+   * e.g. 1000 cash + 1500 card creates one AppointmentPayment row per method.
+   */
+  async createPayments(
+    appointmentId: string,
+    businessId: string,
+    recordedById: string,
+    data: {
+      payments: { paymentMethodId: string; amount: number }[];
+      reference?: string;
+      notes?: string;
+    }
+  ) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+    });
+
+    if (!appointment || appointment.businessId !== businessId) {
+      throw ApiError.notFound('Appointment not found');
+    }
+
+    if (!data.payments || data.payments.length === 0) {
+      throw ApiError.badRequest('At least one payment entry is required');
+    }
+
+    for (const entry of data.payments) {
+      if (!entry.paymentMethodId) {
+        throw ApiError.badRequest('paymentMethodId is required for every payment entry');
+      }
+      if (!(entry.amount > 0)) {
+        throw ApiError.badRequest('Every payment amount must be greater than zero');
+      }
+    }
+
+    const methodIds = data.payments.map((p) => p.paymentMethodId);
+    const paymentMethods = await prisma.paymentMethod.findMany({
+      where: { id: { in: methodIds }, businessId, isActive: true },
+    });
+
+    const methodMap = new Map(paymentMethods.map((m) => [m.id, m]));
+    const invalid = methodIds.filter((id) => !methodMap.has(id));
+    if (invalid.length > 0) {
+      throw ApiError.badRequest('One or more payment methods are invalid or inactive');
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const created = [];
+
+      for (const entry of data.payments) {
+        const method = methodMap.get(entry.paymentMethodId)!;
+
+        const payment = await tx.appointmentPayment.create({
+          data: {
+            appointmentId,
+            businessId,
+            branchId: appointment.branchId,
+            paymentMethodId: entry.paymentMethodId,
+            amount: new Prisma.Decimal(entry.amount.toString()),
+            status: AppointmentPaymentStatus.PAID,
+            reference: data.reference,
+            notes: data.notes,
+            recordedById,
+          },
+          include: {
+            paymentMethod: { select: { name: true, type: true } },
+          },
+        });
+
+        await auditLogService.createAuditLog(
+          {
+            businessId,
+            actorId: recordedById,
+            action: 'APPOINTMENT_PAYMENT_RECORDED',
+            entityType: 'AppointmentPayment',
+            entityId: payment.id,
+            newValues: {
+              appointmentId,
+              amount: entry.amount,
+              method: method.name,
+            },
+          },
+          tx
+        );
+
+        created.push(payment);
+      }
+
+      return created;
+    });
+  }
+
+  /**
    * Get all payments for an appointment.
    */
   async getPaymentsForAppointment(appointmentId: string, businessId: string) {

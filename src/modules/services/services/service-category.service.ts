@@ -26,6 +26,13 @@ export interface CreateSampleWorkInput {
   description?: string;
 }
 
+export interface UpdateSampleWorkInput {
+  name?: string;
+  url?: string;
+  publicId?: string;
+  description?: string | null;
+}
+
 export class ServiceCategoryService {
   private async getMembershipAndUserRoles(businessId: string, userId: string) {
     const membership = await prisma.businessMember.findFirst({
@@ -435,6 +442,117 @@ export class ServiceCategoryService {
       entityId: updated.id,
       oldValues: { isActive: assignment.isActive },
       newValues: { isActive: updated.isActive },
+    });
+
+    return updated;
+  }
+
+  async getSampleWorks(categoryId: string, userId: string) {
+    const category = await prisma.serviceCategory.findUnique({
+      where: { id: categoryId },
+      include: {
+        branchAssignments: { select: { branchId: true, isActive: true } },
+      },
+    });
+
+    if (!category) {
+      throw new ApiError(404, 'Service category not found', ErrorCodes.NOT_FOUND);
+    }
+
+    const auth = await this.getMembershipAndUserRoles(category.businessId, userId);
+
+    if (!auth.isOwnerOrAdmin) {
+      const isAvailableInManagerBranch = category.branchAssignments.some(
+        (ba) => ba.isActive && auth.allowedBranchIds.has(ba.branchId)
+      );
+
+      if (!isAvailableInManagerBranch) {
+        throw new ApiError(403, 'Access denied to this category', ErrorCodes.FORBIDDEN);
+      }
+    }
+
+    return prisma.serviceCategorySampleWork.findMany({
+      where: { categoryId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getSampleWorkById(sampleWorkId: string, userId: string) {
+    const sampleWork = await prisma.serviceCategorySampleWork.findUnique({
+      where: { id: sampleWorkId },
+      include: {
+        category: {
+          include: {
+            branchAssignments: { select: { branchId: true, isActive: true } },
+          },
+        },
+      },
+    });
+
+    if (!sampleWork) {
+      throw new ApiError(404, 'Sample work not found', ErrorCodes.NOT_FOUND);
+    }
+
+    const auth = await this.getMembershipAndUserRoles(sampleWork.category.businessId, userId);
+
+    if (!auth.isOwnerOrAdmin) {
+      const isAvailableInManagerBranch = sampleWork.category.branchAssignments.some(
+        (ba) => ba.isActive && auth.allowedBranchIds.has(ba.branchId)
+      );
+
+      if (!isAvailableInManagerBranch) {
+        throw new ApiError(403, 'Access denied to this sample work', ErrorCodes.FORBIDDEN);
+      }
+    }
+
+    const { category, ...rest } = sampleWork;
+    return rest;
+  }
+
+  async updateSampleWork(
+    sampleWorkId: string,
+    userId: string,
+    input: UpdateSampleWorkInput
+  ) {
+    const sampleWork = await prisma.serviceCategorySampleWork.findUnique({
+      where: { id: sampleWorkId },
+      include: { category: true },
+    });
+
+    if (!sampleWork) {
+      throw new ApiError(404, 'Sample work not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyOwnerOrAdmin(sampleWork.category.businessId, userId);
+
+    const updated = await prisma.serviceCategorySampleWork.update({
+      where: { id: sampleWorkId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.url !== undefined ? { url: input.url } : {}),
+        ...(input.publicId !== undefined ? { publicId: input.publicId } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+      },
+    });
+
+    await auditLogService.createAuditLog({
+      businessId: sampleWork.category.businessId,
+      actorId: userId,
+      action: 'SAMPLE_WORK_UPDATED',
+      entityType: 'ServiceCategorySampleWork',
+      entityId: sampleWorkId,
+      oldValues: {
+        name: sampleWork.name,
+        url: sampleWork.url,
+        publicId: sampleWork.publicId,
+        description: sampleWork.description,
+      },
+      newValues: {
+        name: updated.name,
+        url: updated.url,
+        publicId: updated.publicId,
+        description: updated.description,
+      },
     });
 
     return updated;

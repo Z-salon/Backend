@@ -106,6 +106,39 @@ export class ServiceCategoryController {
     }
   }
 
+  async getSampleWorks(req: Request, res: Response, next: NextFunction) {
+    try {
+      const categoryId = req.params.categoryId;
+      const userId = req.auth!.userId;
+      const result = await serviceCategoryService.getSampleWorks(categoryId, userId);
+      res.status(200).json(successResponse('Sample works retrieved successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getSampleWorkById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const sampleWorkId = req.params.sampleWorkId;
+      const userId = req.auth!.userId;
+      const result = await serviceCategoryService.getSampleWorkById(sampleWorkId, userId);
+      res.status(200).json(successResponse('Sample work retrieved successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateSampleWork(req: Request, res: Response, next: NextFunction) {
+    try {
+      const sampleWorkId = req.params.sampleWorkId;
+      const userId = req.auth!.userId;
+      const result = await serviceCategoryService.updateSampleWork(sampleWorkId, userId, req.body);
+      res.status(200).json(successResponse('Sample work updated successfully', result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async removeSampleWork(req: Request, res: Response, next: NextFunction) {
     try {
       const sampleWorkId = req.params.sampleWorkId;

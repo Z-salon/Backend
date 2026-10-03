@@ -988,10 +988,18 @@ router.delete(
  *         application/json:
  *           schema:
  *             type: object
- *             required: [paymentMethodId, amount]
  *             properties:
- *               paymentMethodId: { type: string, format: uuid }
+ *               paymentMethodId: { type: string, format: uuid, description: Single-method form }
  *               amount: { type: number, exclusiveMinimum: 0 }
+ *               payments:
+ *                 type: array
+ *                 description: Multi-method form; one payment row per entry
+ *                 items:
+ *                   type: object
+ *                   required: [paymentMethodId, amount]
+ *                   properties:
+ *                     paymentMethodId: { type: string, format: uuid }
+ *                     amount: { type: number, exclusiveMinimum: 0 }
  *               reference: { type: string }
  *               notes: { type: string }
  *     responses:
