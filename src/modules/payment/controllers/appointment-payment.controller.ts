@@ -45,6 +45,27 @@ export class AppointmentPaymentController {
     }
   }
 
+  async getAppointmentFinancials(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId, id: appointmentId } = req.params;
+      const financials = await appointmentPaymentService.getAppointmentFinancials(appointmentId, businessId);
+      res.json(successResponse('Appointment financials retrieved', financials));
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async getCustomerOutstanding(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId, customerId } = req.params;
+      const userId = req.auth!.userId;
+      const outstanding = await appointmentPaymentService.getCustomerOutstanding(businessId, customerId, userId);
+      res.json(successResponse('Customer outstanding retrieved', outstanding));
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async voidPayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { businessId, paymentId } = req.params;

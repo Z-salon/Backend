@@ -636,6 +636,37 @@ router.post(
   appointmentController.markNoShow.bind(appointmentController)
 );
 
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/final-amount:
+ *   patch:
+ *     tags: [Appointment Payments]
+ *     summary: Set the final agreed amount for an appointment
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [finalAgreedAmount]
+ *             properties:
+ *               finalAgreedAmount: { type: number }
+ *               reason: { type: string }
+ *     responses:
+ *       200: { description: Final amount recorded }
+ *       400: { description: Invalid amount or appointment status }
+ */
+router.patch(
+  '/businesses/:businessId/appointments/:appointmentId/final-amount',
+  authenticate,
+  requireBusinessMembership,
+  appointmentController.setFinalAmount.bind(appointmentController)
+);
+
 // Service usage
 /**
  * @openapi
@@ -863,7 +894,6 @@ router.patch(
  */
 router.get(
   '/businesses/:businessId/payment-methods/public',
-  authenticate,
   paymentReceiptController.getPublicPaymentMethods.bind(paymentReceiptController)
 );
 
@@ -1069,6 +1099,46 @@ router.patch(
   requireBusinessMembership,
  //requirePermission('APPOINTMENT_UPDATE'),
   appointmentPaymentController.voidPayment.bind(appointmentPaymentController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{id}/financials:
+ *   get:
+ *     tags: [Appointment Payments]
+ *     summary: Get the canonical financial state for an appointment
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: finalAgreedAmount, verifiedPaid, outstanding, refunded, refundable }
+ */
+router.get(
+  '/businesses/:businessId/appointments/:id/financials',
+  authenticate,
+  requireBusinessMembership,
+  appointmentPaymentController.getAppointmentFinancials.bind(appointmentPaymentController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/customers/{customerId}/outstanding:
+ *   get:
+ *     tags: [Appointment Payments]
+ *     summary: Get what a customer currently owes the salon
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: customerId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Aggregated outstanding balance across finalized appointments }
+ */
+router.get(
+  '/businesses/:businessId/customers/:customerId/outstanding',
+  authenticate,
+  requireBusinessMembership,
+  appointmentPaymentController.getCustomerOutstanding.bind(appointmentPaymentController)
 );
 
 export default router;

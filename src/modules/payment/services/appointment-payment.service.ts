@@ -2,6 +2,11 @@ import { prisma } from '../../../libs/prisma';
 import { ApiError } from '../../../utils/api-error';
 import { Prisma, AppointmentPaymentStatus } from '@prisma/client';
 import { auditLogService } from '../../business/services/audit-log.service';
+import {
+  getAppointmentFinancials as computeAppointmentFinancials,
+  toDecimal,
+  ZERO,
+} from './payment-finance.helpers';
 
 export class AppointmentPaymentService {
   /**
@@ -204,6 +209,10 @@ export class AppointmentPaymentService {
       throw ApiError.badRequest(`Cannot void a payment that is in ${payment.status} status`);
     }
 
+    if (toDecimal(payment.refundedAmount).gt(0)) {
+      throw ApiError.badRequest('Cannot void a payment that has already been refunded');
+    }
+
     if (!reason) {
       throw ApiError.badRequest('A reason is required to void a payment');
     }
@@ -234,6 +243,94 @@ export class AppointmentPaymentService {
     });
 
     return updated;
+  }
+
+  /**
+   * Canonical appointment-level financial state: verified paid, outstanding,
+   * refunded and refundable. One calculation used by every caller.
+   */
+  async getAppointmentFinancials(appointmentId: string, businessId: string) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment || appointment.businessId !== businessId) {
+      throw ApiError.notFound('Appointment not found');
+    }
+    return computeAppointmentFinancials(prisma, appointmentId);
+  }
+
+  /**
+   * What a customer currently owes the salon, aggregated from finalized appointments.
+   * Pending/rejected receipts and voided payments never reduce it; refunds never add to it.
+   */
+  async getCustomerOutstanding(businessId: string, customerId: string, userId: string) {
+    const member = await prisma.businessMember.findUnique({
+      where: { businessId_userId: { businessId, userId } },
+      include: {
+        userRoles: { include: { role: true, branches: { select: { branchId: true } } } },
+      },
+    });
+
+    if (!member || member.status !== 'ACTIVE') {
+      throw ApiError.forbidden('Not a member of this business');
+    }
+
+    const systemKeys = member.userRoles
+      .map((ur) => ur.role.systemKey)
+      .filter((key): key is string => Boolean(key));
+    const isOwnerOrAdmin = systemKeys.some((key) => ['OWNER', 'ADMIN'].includes(key));
+
+    const where: any = { businessId, customerId, finalAgreedAmount: { not: null } };
+    if (!isOwnerOrAdmin) {
+      const allowed = member.userRoles
+        .filter((ur) => ur.scopeType === 'BRANCH')
+        .flatMap((ur) => ur.branches.map((b) => b.branchId));
+      where.branchId = { in: allowed };
+    }
+
+    const appointments = await prisma.appointment.findMany({
+      where,
+      orderBy: { scheduledStart: 'desc' },
+      select: {
+        id: true,
+        branchId: true,
+        status: true,
+        scheduledStart: true,
+        totalAmount: true,
+        finalAgreedAmount: true,
+      },
+    });
+
+    const breakdown = [];
+    let totalOutstanding = ZERO;
+    let totalPaid = ZERO;
+    let totalRefunded = ZERO;
+
+    for (const appt of appointments) {
+      const financials = await computeAppointmentFinancials(prisma, appt.id);
+      totalOutstanding = totalOutstanding.plus(financials.outstanding);
+      totalPaid = totalPaid.plus(financials.verifiedPaid);
+      totalRefunded = totalRefunded.plus(financials.refunded);
+
+      breakdown.push({
+        appointmentId: appt.id,
+        branchId: appt.branchId,
+        status: appt.status,
+        scheduledStart: appt.scheduledStart,
+        originalAmount: appt.totalAmount,
+        finalAgreedAmount: appt.finalAgreedAmount,
+        verifiedPaid: financials.verifiedPaid,
+        outstanding: financials.outstanding,
+        refunded: financials.refunded,
+      });
+    }
+
+    return {
+      businessId,
+      customerId,
+      totalOutstanding,
+      totalPaid,
+      totalRefunded,
+      appointments: breakdown,
+    };
   }
 }
 

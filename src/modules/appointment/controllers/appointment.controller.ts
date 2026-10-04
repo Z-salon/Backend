@@ -430,6 +430,30 @@ export class AppointmentController {
       next(error);
     }
   }
+
+  /**
+   * Set/override the final agreed amount (distinct from the original quoted price).
+   */
+  async setFinalAmount(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { finalAgreedAmount, reason } = req.body;
+
+      const appointment = await appointmentService.setFinalAgreedAmount(
+        appointmentId,
+        businessId,
+        userId,
+        finalAgreedAmount,
+        reason
+      );
+
+      res.json(successResponse('Final amount recorded', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const appointmentController = new AppointmentController();

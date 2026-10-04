@@ -19,6 +19,10 @@ import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignm
 import { Prisma } from '@prisma/client';
 import { sendAppointmentConfirmationSms } from '../../auth/sms/sms.service';
 import { feedbackRequestService } from '../../feedback/services/feedback-request.service';
+import {
+  getAppointmentFinancials,
+  lockAppointmentPayments,
+} from '../../payment/services/payment-finance.helpers';
 
 /** Upper bound for a single operational extension (8 hours). */
 const MAX_APPOINTMENT_EXTENSION_MINUTES = 480;
@@ -158,6 +162,10 @@ export class AppointmentService {
           status: initialStatus,
           totalAmount: new Prisma.Decimal(totalAmount.toString()),
           depositAmount: depositAmount ? new Prisma.Decimal(depositAmount.toString()) : null,
+          // Snapshot the refund policy so later config changes cannot rewrite history.
+          refundPolicyType: bookingConfig?.refundPolicyType ?? null,
+          refundPercentage: bookingConfig?.refundPercentage ?? null,
+          refundDeadlineHours: bookingConfig?.refundDeadlineHours ?? null,
           notes,
           internalNotes,
           bookingSource,
@@ -662,6 +670,11 @@ export class AppointmentService {
           ...(timestampField ? { [timestampField]: new Date() } : {}),
           ...(startTime ? { actualStart: startTime } : {}),
           ...(completionTime ? { actualEnd: completionTime } : {}),
+          // Completion finalizes the obligation. Default to the quoted amount unless an
+          // explicit final agreed amount was already recorded (never overwrites it).
+          ...(status === AppointmentStatus.COMPLETED && appointment.finalAgreedAmount === null
+            ? { finalAgreedAmount: appointment.totalAmount }
+            : {}),
         },
         include: {
           customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
@@ -926,20 +939,24 @@ export class AppointmentService {
       throw new ApiError(400, `Cannot cancel an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Validation for refund logic
+    // Refund validation follows the appointment's historical policy snapshot via the
+    // canonical refundable calculation (policy cap minus already-refunded/reserved).
     let verifiedRefundAmount = new Prisma.Decimal(0);
     if (refund) {
-      const paidPayments = await prisma.appointmentPayment.aggregate({
-        where: { appointmentId, status: 'PAID' },
-        _sum: { amount: true },
-      });
-      const amountPaid = paidPayments._sum.amount || new Prisma.Decimal(0);
-      
-      if (refundAmount !== undefined && refundAmount > amountPaid.toNumber()) {
-        throw new ApiError(400, 'Refund amount cannot exceed actual paid amount', ErrorCodes.VALIDATION_ERROR);
+      const financials = await getAppointmentFinancials(prisma, appointmentId);
+      if (refundAmount !== undefined) {
+        const requested = new Prisma.Decimal(refundAmount.toString());
+        if (requested.gt(financials.refundable)) {
+          throw new ApiError(
+            400,
+            'Refund amount cannot exceed the available refundable amount',
+            ErrorCodes.VALIDATION_ERROR
+          );
+        }
+        verifiedRefundAmount = requested;
+      } else {
+        verifiedRefundAmount = financials.refundable;
       }
-      
-      verifiedRefundAmount = refundAmount !== undefined ? new Prisma.Decimal(refundAmount) : amountPaid;
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -968,14 +985,23 @@ export class AppointmentService {
       });
 
       if (refund && verifiedRefundAmount.gt(0)) {
-        await tx.refundRequest.create({
-          data: {
-            appointmentId,
-            requestedAmount: verifiedRefundAmount,
-            status: 'PENDING',
-            reason: reason || 'Business user cancellation refund',
-          }
-        });
+        // Serialize against concurrent refund operations and re-check under lock.
+        await lockAppointmentPayments(tx, appointmentId);
+        const lockedFinancials = await getAppointmentFinancials(tx, appointmentId);
+        const createAmount = verifiedRefundAmount.gt(lockedFinancials.refundable)
+          ? lockedFinancials.refundable
+          : verifiedRefundAmount;
+
+        if (createAmount.gt(0)) {
+          await tx.refundRequest.create({
+            data: {
+              appointmentId,
+              requestedAmount: createAmount,
+              status: 'PENDING',
+              reason: reason || 'Business user cancellation refund',
+            }
+          });
+        }
       }
 
       await auditLogService.createAuditLog(
@@ -1333,7 +1359,11 @@ export class AppointmentService {
       actualEnd: appointment.actualEnd,
       status: appointment.status,
       totalAmount: appointment.totalAmount,
+      finalAgreedAmount: appointment.finalAgreedAmount,
       depositAmount: appointment.depositAmount,
+      refundPolicyType: appointment.refundPolicyType,
+      refundPercentage: appointment.refundPercentage,
+      refundDeadlineHours: appointment.refundDeadlineHours,
       notes: appointment.notes,
       internalNotes: appointment.internalNotes,
       bookingSource: appointment.bookingSource,
@@ -1561,6 +1591,67 @@ export class AppointmentService {
       createdAt: h.createdAt,
       actor: h.actor ? { id: h.actor.id, phone: h.actor.phone } : null,
     })); 
+  }
+
+  /**
+   * Record/override the final agreed amount for an appointment.
+   * Kept separate from the original quoted `totalAmount`, which is never overwritten.
+   */
+  async setFinalAgreedAmount(
+    appointmentId: string,
+    businessId: string,
+    userId: string,
+    finalAgreedAmount: number,
+    reason?: string
+  ) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    if (['CANCELLED', 'EXPIRED', 'NO_SHOW'].includes(appointment.status)) {
+      throw new ApiError(
+        400,
+        `Cannot set a final amount for an appointment in ${appointment.status} status.`,
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+
+    const amount = Number(finalAgreedAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ApiError(400, 'finalAgreedAmount must be greater than zero', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: { finalAgreedAmount: new Prisma.Decimal(amount.toString()) },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        },
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_FINAL_AMOUNT_SET',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues: { finalAgreedAmount: appointment.finalAgreedAmount, totalAmount: appointment.totalAmount },
+          newValues: { finalAgreedAmount: amount, reason },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
   }
 
   /**

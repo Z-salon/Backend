@@ -35,7 +35,7 @@ export class PaymentReceiptService {
       paymentMethodId: string;
       submittedAmount?: number;
       receiptImageUrl: string;
-      receiptImagePublicId: string;
+      receiptImagePublicId?: string;
       customerNote?: string;
     }
   ) {

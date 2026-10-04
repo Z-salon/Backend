@@ -132,6 +132,7 @@ model User {
   recordedPayments         AppointmentPayment[]       @relation("AppointmentPaymentRecordedBy")
   confirmedAppointments    Appointment[]              @relation("AppointmentConfirmedBy")
   reviewedRefunds          RefundRequest[]            @relation("RefundReviewedBy")
+  completedRefunds         RefundRequest[]            @relation("RefundCompletedBy")
 
   @@index([phone])
   @@index([status])
@@ -934,7 +935,15 @@ model Appointment {
   actualEnd      DateTime?
   status         AppointmentStatus @default(PENDING)
   totalAmount    Decimal           @db.Decimal(12, 2)
+  // Final amount actually agreed/charged after service. Null until finalized.
+  // Never overwrites totalAmount (the original/catalog price).
+  finalAgreedAmount Decimal?       @db.Decimal(12, 2)
   depositAmount  Decimal?          @db.Decimal(12, 2)
+  // Historical refund-policy snapshot captured at appointment creation so later
+  // config changes cannot retroactively make an appointment refundable/non-refundable.
+  refundPolicyType   RefundPolicyType?
+  refundPercentage   Int?
+  refundDeadlineHours Int?
   notes          String?
   internalNotes  String?
   bookingSource  BookingSource     @default(ONLINE)
@@ -963,7 +972,7 @@ model Appointment {
   staff              AppointmentStaff[]
   statusHistory      AppointmentStatusHistory[]
   extensions         AppointmentExtension[]
-  refundRequest      RefundRequest?
+  refundRequests     RefundRequest[]
   serviceUsages      ServiceUsage[]
   paymentReceipts    PaymentReceipt[]
   payments           AppointmentPayment[]
@@ -1044,11 +1053,14 @@ enum RefundRequestStatus {
   PENDING
   APPROVED
   REJECTED
+  /// Money was actually returned outside Z-Salon and confirmed by staff.
+  /// APPROVED alone never means the customer received the money.
+  COMPLETED
 }
 
 model RefundRequest {
   id               String              @id @default(uuid())
-  appointmentId    String              @unique
+  appointmentId    String
   paymentId        String?
   requestedAmount  Decimal             @db.Decimal(12, 2)
   approvedAmount   Decimal?            @db.Decimal(12, 2)
@@ -1058,15 +1070,24 @@ model RefundRequest {
   reviewedById     String?
   reason           String?
   rejectionReason  String?
+
+  // External-refund confirmation (APPROVED -> COMPLETED).
+  completedAt        DateTime?
+  completedById      String?
+  completionReference String?
+  completionNote     String?
+
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
   appointment Appointment         @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   reviewedBy  User?               @relation("RefundReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  completedBy User?               @relation("RefundCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   payment     AppointmentPayment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([appointmentId])
   @@index([status])
+  @@index([paymentId])
 }
 
 enum PaymentVerificationStatus {
@@ -1145,6 +1166,9 @@ model AppointmentPayment {
 
   amount          Decimal                  @db.Decimal(12, 2)
   status          AppointmentPaymentStatus @default(PAID)
+  // How much of this payment has been refunded and confirmed (COMPLETED refunds).
+  // Kept separate from `amount` so original payment history is never destroyed.
+  refundedAmount  Decimal                  @default(0) @db.Decimal(12, 2)
 
   reference       String?
   notes           String?

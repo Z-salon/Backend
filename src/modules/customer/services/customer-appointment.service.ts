@@ -5,6 +5,7 @@ import { auditLogService } from '../../business/services/audit-log.service';
 import { availabilityService } from '../../services/availability/availability.service';
 import { appointmentService } from '../../appointment/services/appointment.service';
 import { sendAppointmentCancellationSms } from '../../auth/sms/sms.service';
+import { getAppointmentFinancials } from '../../payment/services/payment-finance.helpers';
 
 export class CustomerAppointmentService {
   /**
@@ -266,22 +267,13 @@ export class CustomerAppointmentService {
       throw new ApiError(400, `Cannot cancel within ${config.cancellationWindowMinutes} minutes of the appointment.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Determine refund amount based on actual payments recorded
-    const paidPayments = await prisma.appointmentPayment.aggregate({
-      where: { appointmentId, status: 'PAID' },
-      _sum: { amount: true },
-    });
-    const amountPaid = paidPayments._sum.amount || new Prisma.Decimal(0);
-
-    let refundableAmount = new Prisma.Decimal(0);
-    if (amountPaid.gt(0)) {
-      if (config.customerCancellationPolicy === 'ALWAYS') {
-        refundableAmount = amountPaid;
-      } else if (config.customerCancellationPolicy === 'BEFORE_DEADLINE') {
-        if (hoursToAppointment >= config.refundDeadlineHours) {
-          refundableAmount = amountPaid;
-        }
-      }
+    // Refund amount follows the appointment's historical policy snapshot (never the
+    // current config), bounded by the canonical refundable calculation.
+    const financials = await getAppointmentFinancials(prisma, appointmentId);
+    let refundableAmount = financials.refundable;
+    const deadlineHours = appointment.refundDeadlineHours;
+    if (deadlineHours != null && hoursToAppointment < deadlineHours) {
+      refundableAmount = new Prisma.Decimal(0);
     }
 
     await prisma.$transaction(async (tx) => {

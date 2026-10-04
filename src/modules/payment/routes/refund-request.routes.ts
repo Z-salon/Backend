@@ -14,7 +14,7 @@ const router = Router();
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
- *       - { in: query, name: status, schema: { type: string, enum: [PENDING, APPROVED, REJECTED] } }
+ *       - { in: query, name: status, schema: { type: string, enum: [PENDING, APPROVED, REJECTED, COMPLETED] } }
  *       - { in: query, name: page, schema: { type: integer, default: 1 } }
  *       - { in: query, name: limit, schema: { type: integer, default: 20 } }
  *     responses:
@@ -105,6 +105,88 @@ router.post(
   authenticate,
   requireBusinessMembership,
   refundRequestController.rejectRefund.bind(refundRequestController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/refundable:
+ *   get:
+ *     tags: [Refunds]
+ *     summary: Get the refundable balance for an appointment
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Refundable balance retrieved }
+ */
+router.get(
+  '/businesses/:businessId/appointments/:appointmentId/refundable',
+  authenticate,
+  requireBusinessMembership,
+  refundRequestController.getRefundableAmount.bind(refundRequestController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/refund-requests:
+ *   post:
+ *     tags: [Refunds]
+ *     summary: Create a refund request
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [appointmentId]
+ *             properties:
+ *               appointmentId: { type: string, format: uuid }
+ *               amount: { type: number }
+ *               paymentId: { type: string, format: uuid }
+ *               reason: { type: string }
+ *     responses:
+ *       201: { description: Refund request created }
+ *       400: { description: Policy/eligibility/amount invalid }
+ */
+router.post(
+  '/businesses/:businessId/refund-requests',
+  authenticate,
+  requireBusinessMembership,
+  refundRequestController.createRefundRequest.bind(refundRequestController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/refund-requests/{refundRequestId}/complete:
+ *   post:
+ *     tags: [Refunds]
+ *     summary: Confirm an approved refund was transferred outside Z-Salon
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: refundRequestId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               amount: { type: number }
+ *               reference: { type: string }
+ *               note: { type: string }
+ *     responses:
+ *       200: { description: Refund completed }
+ *       400: { description: Not approved, or amount exceeds the approved amount }
+ */
+router.post(
+  '/businesses/:businessId/refund-requests/:refundRequestId/complete',
+  authenticate,
+  requireBusinessMembership,
+  refundRequestController.completeRefund.bind(refundRequestController)
 );
 
 export default router;
