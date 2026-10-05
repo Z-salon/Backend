@@ -5,6 +5,7 @@ import { sendRefundApprovedSms, sendRefundRejectedSms } from '../../auth/sms/sms
 import {
   applyCompletedRefund,
   getAppointmentFinancials,
+  getEffectiveRefundPolicyForFinancials,
   lockAppointmentPayments,
   toDecimal,
 } from './payment-finance.helpers';
@@ -168,7 +169,9 @@ export class RefundRequestService {
     }
     await this.verifyAccess(businessId, userId, appointment.branchId);
 
-    if (!appointment.refundPolicyType || appointment.refundPolicyType === 'NO_REFUND') {
+    // Use the effective refund policy (checks override first, then base policy)
+    const effectivePolicy = await getEffectiveRefundPolicyForFinancials(prisma, appointmentId);
+    if (!effectivePolicy.policyType || effectivePolicy.policyType === 'NO_REFUND') {
       throw ApiError.badRequest('The refund policy for this appointment does not allow refunds');
     }
     this.assertRefundEligible(appointment.status);

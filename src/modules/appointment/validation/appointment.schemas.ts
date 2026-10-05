@@ -64,9 +64,23 @@ export const publicReceiptSchema = z.object({
 export const appointmentUpdateSchema = z.object({
   notes: z.string().max(1000).nullable().optional(),
   internalNotes: z.string().max(1000).nullable().optional(),
+  // Refund policy override fields (null = remove override, inherit from branch)
+  refundPolicyTypeOverride: z.enum(['NO_REFUND', 'FULL_REFUND', 'PARTIAL_REFUND']).nullable().optional(),
+  refundPercentageOverride: z.number().int().min(0).max(100).nullable().optional(),
+  refundDeadlineHoursOverride: z.number().int().min(0).nullable().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
   message: 'At least one field must be provided for update',
-});
+}).refine(
+  (data) => {
+    // If refundPolicyTypeOverride is PARTIAL_REFUND, refundPercentageOverride is required
+    if (data.refundPolicyTypeOverride === 'PARTIAL_REFUND' && (data.refundPercentageOverride === undefined || data.refundPercentageOverride === null)) {
+      return false;
+    }
+    // If refundPolicyTypeOverride is provided but not PARTIAL_REFUND, percentage is optional
+    return true;
+  },
+  { message: 'PARTIAL_REFUND requires refundPercentageOverride (0 < percentage < 100)' }
+);
 
 export const appointmentRescheduleSchema = z.object({
   newStartTime: z.string().datetime({ message: 'Invalid start datetime' }),

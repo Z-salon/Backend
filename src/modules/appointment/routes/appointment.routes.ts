@@ -667,6 +667,45 @@ router.patch(
   appointmentController.setFinalAmount.bind(appointmentController)
 );
 
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/refund-policy:
+ *   patch:
+ *     tags: [Appointments]
+ *     summary: Update appointment refund policy override
+ *     description: >
+ *       Set or remove an appointment-level refund policy override.
+ *       When override is set, it takes precedence over the branch's BranchBookingConfig.
+ *       When override is removed (set to null), the appointment inherits the branch config.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               refundPolicyTypeOverride: { type: string, enum: [NO_REFUND, FULL_REFUND, PARTIAL_REFUND], nullable: true }
+ *               refundPercentageOverride: { type: integer, minimum: 0, maximum: 100, nullable: true }
+ *               refundDeadlineHoursOverride: { type: integer, minimum: 0, nullable: true }
+ *     responses:
+ *       200: { description: Refund policy override updated }
+ *       400: { description: Invalid override configuration }
+ *       401: { description: Authentication required }
+ *       403: { description: Access denied }
+ *       404: { description: Appointment not found }
+ */
+router.patch(
+  '/businesses/:businessId/appointments/:appointmentId/refund-policy',
+  authenticate,
+  requireBusinessMembership,
+  bodyValidator(appointmentUpdateSchema),
+  appointmentController.updateRefundPolicy.bind(appointmentController)
+);
+
 // Service usage
 /**
  * @openapi

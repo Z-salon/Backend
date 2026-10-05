@@ -15,7 +15,7 @@ import {
   AppointmentValidationResult,
   AppointmentResponse,
 } from '../types';
-import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignmentMode, CustomerConfirmationStatus } from '@prisma/client';
+import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignmentMode, CustomerConfirmationStatus, RefundPolicyType } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { sendAppointmentConfirmationSms } from '../../auth/sms/sms.service';
 import { feedbackRequestService } from '../../feedback/services/feedback-request.service';
@@ -23,6 +23,7 @@ import {
   getAppointmentFinancials,
   lockAppointmentPayments,
 } from '../../payment/services/payment-finance.helpers';
+import { calculateRefundOnCancellation } from '../../payment/services/refund-policy.service';
 
 /** Upper bound for a single operational extension (8 hours). */
 const MAX_APPOINTMENT_EXTENSION_MINUTES = 480;
@@ -162,10 +163,15 @@ export class AppointmentService {
           status: initialStatus,
           totalAmount: new Prisma.Decimal(totalAmount.toString()),
           depositAmount: depositAmount ? new Prisma.Decimal(depositAmount.toString()) : null,
-          // Snapshot the refund policy so later config changes cannot rewrite history.
+          // Snapshot branch policy for backward compatibility (base fields).
+          // Override fields are null by default — appointment inherits branch config dynamically.
+          // Staff can set refundPolicyTypeOverride etc. later via the update API.
           refundPolicyType: bookingConfig?.refundPolicyType ?? null,
           refundPercentage: bookingConfig?.refundPercentage ?? null,
           refundDeadlineHours: bookingConfig?.refundDeadlineHours ?? null,
+          refundPolicyTypeOverride: null,
+          refundPercentageOverride: null,
+          refundDeadlineHoursOverride: null,
           notes,
           internalNotes,
           bookingSource,
@@ -396,6 +402,41 @@ export class AppointmentService {
     return null;
   }
 
+  /**
+   * Validate refund override fields for consistency.
+   * - NO_REFUND: percentage and deadline are optional (will be ignored)
+   * - FULL_REFUND: percentage is optional (100% implied)
+   * - PARTIAL_REFUND: percentage is required, must be 0 < pct < 100
+   * - Deadline must be >= 0
+   */
+  private async validateRefundOverride(data: any, branchId: string): Promise<void> {
+    const { refundPolicyTypeOverride, refundPercentageOverride, refundDeadlineHoursOverride } = data;
+
+    if (refundPolicyTypeOverride !== undefined && refundPolicyTypeOverride !== null) {
+      if (!['NO_REFUND', 'FULL_REFUND', 'PARTIAL_REFUND'].includes(refundPolicyTypeOverride)) {
+        throw new ApiError(400, 'Invalid refund policy type. Must be NO_REFUND, FULL_REFUND, or PARTIAL_REFUND.', ErrorCodes.VALIDATION_ERROR);
+      }
+
+      if (refundPolicyTypeOverride === 'PARTIAL_REFUND') {
+        if (refundPercentageOverride === undefined || refundPercentageOverride === null) {
+          throw new ApiError(400, 'PARTIAL_REFUND requires refundPercentageOverride (0 < percentage < 100).', ErrorCodes.VALIDATION_ERROR);
+        }
+        if (typeof refundPercentageOverride !== 'number' || refundPercentageOverride <= 0 || refundPercentageOverride >= 100) {
+          throw new ApiError(400, 'refundPercentageOverride must be between 0 and 100 (exclusive) for PARTIAL_REFUND.', ErrorCodes.VALIDATION_ERROR);
+        }
+      }
+    }
+
+    if (refundDeadlineHoursOverride !== undefined && refundDeadlineHoursOverride !== null) {
+      if (typeof refundDeadlineHoursOverride !== 'number' || refundDeadlineHoursOverride < 0) {
+        throw new ApiError(400, 'refundDeadlineHoursOverride must be >= 0.', ErrorCodes.VALIDATION_ERROR);
+      }
+    }
+
+    // For NO_REFUND, percentage doesn't make sense but we allow it for flexibility
+    // (it will simply be ignored by the refund calculation).
+  }
+
   private async sendConfirmationSms(customer: any, scheduledStart: Date, scheduledEnd: Date): Promise<void> {
     try {
       const phone = customer?.phones?.find((p: any) => p.isPrimary)?.phone || customer?.phones?.[0]?.phone;
@@ -576,10 +617,22 @@ export class AppointmentService {
       );
     }
 
-    const oldValues = {
+    // Validate refund override fields if provided
+    if (data.refundPolicyTypeOverride !== undefined || data.refundPercentageOverride !== undefined || data.refundDeadlineHoursOverride !== undefined) {
+      await this.validateRefundOverride(data, appointment.branchId);
+    }
+
+    const oldValues: any = {
       notes: appointment.notes,
       internalNotes: appointment.internalNotes,
     };
+
+    // Track old refund override values for audit
+    if (data.refundPolicyTypeOverride !== undefined || data.refundPercentageOverride !== undefined || data.refundDeadlineHoursOverride !== undefined) {
+      oldValues.refundPolicyTypeOverride = appointment.refundPolicyTypeOverride;
+      oldValues.refundPercentageOverride = appointment.refundPercentageOverride;
+      oldValues.refundDeadlineHoursOverride = appointment.refundDeadlineHoursOverride;
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.appointment.update({
@@ -587,6 +640,9 @@ export class AppointmentService {
         data: {
           ...(data.notes !== undefined ? { notes: data.notes } : {}),
           ...(data.internalNotes !== undefined ? { internalNotes: data.internalNotes } : {}),
+          ...(data.refundPolicyTypeOverride !== undefined ? { refundPolicyTypeOverride: data.refundPolicyTypeOverride } : {}),
+          ...(data.refundPercentageOverride !== undefined ? { refundPercentageOverride: data.refundPercentageOverride } : {}),
+          ...(data.refundDeadlineHoursOverride !== undefined ? { refundDeadlineHoursOverride: data.refundDeadlineHoursOverride } : {}),
         },
         include: {
           customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
@@ -606,6 +662,9 @@ export class AppointmentService {
           newValues: {
             notes: data.notes !== undefined ? data.notes : appointment.notes,
             internalNotes: data.internalNotes !== undefined ? data.internalNotes : appointment.internalNotes,
+            ...(data.refundPolicyTypeOverride !== undefined ? { refundPolicyTypeOverride: data.refundPolicyTypeOverride } : {}),
+            ...(data.refundPercentageOverride !== undefined ? { refundPercentageOverride: data.refundPercentageOverride } : {}),
+            ...(data.refundDeadlineHoursOverride !== undefined ? { refundDeadlineHoursOverride: data.refundDeadlineHoursOverride } : {}),
           },
         },
         tx
@@ -939,23 +998,38 @@ export class AppointmentService {
       throw new ApiError(400, `Cannot cancel an appointment in ${appointment.status} status.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Refund validation follows the appointment's historical policy snapshot via the
-    // canonical refundable calculation (policy cap minus already-refunded/reserved).
-    let verifiedRefundAmount = new Prisma.Decimal(0);
+    // Compute refund amount automatically from the effective policy.
+    // The caller's `refund` flag controls whether a refund request is created;
+    // the amount is always calculated from the policy, never passed in from the
+    // frontend. If refundAmount is explicitly provided, it is capped by the
+    // calculated refundable amount (for admin override scenarios).
+    let calculatedRefund = new Prisma.Decimal(0);
+    let effectivePolicy: { policyType: string; refundPercentage: number | null; refundDeadlineHours: number | null; isOverridden: boolean } | null = null;
+
     if (refund) {
-      const financials = await getAppointmentFinancials(prisma, appointmentId);
+      const result = await calculateRefundOnCancellation(
+        prisma,
+        appointmentId,
+        appointment.branchId,
+        new Date(),
+        appointment.scheduledStart
+      );
+      effectivePolicy = result;
+
       if (refundAmount !== undefined) {
+        // Admin-provided amount: cap it at the calculated refundable amount.
         const requested = new Prisma.Decimal(refundAmount.toString());
-        if (requested.gt(financials.refundable)) {
+        const maxRefundable = new Prisma.Decimal(result.refundAmount.toString());
+        if (requested.gt(maxRefundable)) {
           throw new ApiError(
             400,
-            'Refund amount cannot exceed the available refundable amount',
+            'Refund amount cannot exceed the calculated refundable amount',
             ErrorCodes.VALIDATION_ERROR
           );
         }
-        verifiedRefundAmount = requested;
+        calculatedRefund = requested;
       } else {
-        verifiedRefundAmount = financials.refundable;
+        calculatedRefund = new Prisma.Decimal(result.refundAmount.toString());
       }
     }
 
@@ -984,13 +1058,13 @@ export class AppointmentService {
         }
       });
 
-      if (refund && verifiedRefundAmount.gt(0)) {
+      if (refund && calculatedRefund.gt(0)) {
         // Serialize against concurrent refund operations and re-check under lock.
         await lockAppointmentPayments(tx, appointmentId);
         const lockedFinancials = await getAppointmentFinancials(tx, appointmentId);
-        const createAmount = verifiedRefundAmount.gt(lockedFinancials.refundable)
+        const createAmount = calculatedRefund.gt(lockedFinancials.refundable)
           ? lockedFinancials.refundable
-          : verifiedRefundAmount;
+          : calculatedRefund;
 
         if (createAmount.gt(0)) {
           await tx.refundRequest.create({
@@ -1012,7 +1086,12 @@ export class AppointmentService {
           entityType: 'Appointment',
           entityId: appointmentId,
           oldValues: { status: appointment.status },
-          newValues: { status: AppointmentStatus.CANCELLED, refund, refundAmount: verifiedRefundAmount.toNumber() },
+          newValues: {
+            status: AppointmentStatus.CANCELLED,
+            refund,
+            refundAmount: calculatedRefund.toNumber(),
+            effectivePolicy: effectivePolicy ?? null,
+          },
         },
         tx
       );
@@ -1361,9 +1440,15 @@ export class AppointmentService {
       totalAmount: appointment.totalAmount,
       finalAgreedAmount: appointment.finalAgreedAmount,
       depositAmount: appointment.depositAmount,
+      // Effective refund policy (resolved from override or branch config)
+      // The actual values are in the override fields below.
       refundPolicyType: appointment.refundPolicyType,
       refundPercentage: appointment.refundPercentage,
       refundDeadlineHours: appointment.refundDeadlineHours,
+      // Appointment-level refund override fields (null = inherit from branch)
+      refundPolicyTypeOverride: appointment.refundPolicyTypeOverride,
+      refundPercentageOverride: appointment.refundPercentageOverride,
+      refundDeadlineHoursOverride: appointment.refundDeadlineHoursOverride,
       notes: appointment.notes,
       internalNotes: appointment.internalNotes,
       bookingSource: appointment.bookingSource,
@@ -1644,6 +1729,76 @@ export class AppointmentService {
           entityId: appointmentId,
           oldValues: { finalAgreedAmount: appointment.finalAgreedAmount, totalAmount: appointment.totalAmount },
           newValues: { finalAgreedAmount: amount, reason },
+        },
+        tx
+      );
+
+      return updatedAppt;
+    });
+
+    return this.mapToResponse(updated);
+  }
+
+  /**
+   * Update the refund policy override for an appointment.
+   * Allows staff to set or remove an appointment-level refund policy override.
+   * When override is set, it takes precedence over the branch's BranchBookingConfig.
+   * When override is removed (set to null), the appointment inherits the branch config.
+   */
+  async updateRefundPolicyOverride(
+    appointmentId: string,
+    businessId: string,
+    userId: string,
+    data: {
+      refundPolicyTypeOverride?: RefundPolicyType | null;
+      refundPercentageOverride?: number | null;
+      refundDeadlineHoursOverride?: number | null;
+    }
+  ) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+    if (!appointment || appointment.businessId !== businessId) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
+    }
+
+    await this.verifyAppointmentAccess(businessId, userId, appointment);
+
+    // Validate the override fields
+    await this.validateRefundOverride(data, appointment.branchId);
+
+    const oldValues: any = {
+      refundPolicyTypeOverride: appointment.refundPolicyTypeOverride,
+      refundPercentageOverride: appointment.refundPercentageOverride,
+      refundDeadlineHoursOverride: appointment.refundDeadlineHoursOverride,
+    };
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedAppt = await tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          ...(data.refundPolicyTypeOverride !== undefined ? { refundPolicyTypeOverride: data.refundPolicyTypeOverride } : {}),
+          ...(data.refundPercentageOverride !== undefined ? { refundPercentageOverride: data.refundPercentageOverride } : {}),
+          ...(data.refundDeadlineHoursOverride !== undefined ? { refundDeadlineHoursOverride: data.refundDeadlineHoursOverride } : {}),
+        },
+        include: {
+          customer: { select: { id: true, firstName: true, lastName: true, phones: true } },
+          service: { select: { id: true, name: true, durationMinutes: true, price: true } },
+          staff: { include: { staff: { select: { id: true, firstName: true, lastName: true } } } },
+        },
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'APPOINTMENT_REFUND_POLICY_UPDATED',
+          entityType: 'Appointment',
+          entityId: appointmentId,
+          oldValues,
+          newValues: {
+            refundPolicyTypeOverride: data.refundPolicyTypeOverride,
+            refundPercentageOverride: data.refundPercentageOverride,
+            refundDeadlineHoursOverride: data.refundDeadlineHoursOverride,
+          },
         },
         tx
       );

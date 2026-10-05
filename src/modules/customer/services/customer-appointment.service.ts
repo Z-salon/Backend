@@ -5,7 +5,7 @@ import { auditLogService } from '../../business/services/audit-log.service';
 import { availabilityService } from '../../services/availability/availability.service';
 import { appointmentService } from '../../appointment/services/appointment.service';
 import { sendAppointmentCancellationSms } from '../../auth/sms/sms.service';
-import { getAppointmentFinancials } from '../../payment/services/payment-finance.helpers';
+import { calculateRefundOnCancellation } from '../../payment/services/refund-policy.service';
 
 export class CustomerAppointmentService {
   /**
@@ -267,14 +267,17 @@ export class CustomerAppointmentService {
       throw new ApiError(400, `Cannot cancel within ${config.cancellationWindowMinutes} minutes of the appointment.`, ErrorCodes.VALIDATION_ERROR);
     }
 
-    // Refund amount follows the appointment's historical policy snapshot (never the
-    // current config), bounded by the canonical refundable calculation.
-    const financials = await getAppointmentFinancials(prisma, appointmentId);
-    let refundableAmount = financials.refundable;
-    const deadlineHours = appointment.refundDeadlineHours;
-    if (deadlineHours != null && hoursToAppointment < deadlineHours) {
-      refundableAmount = new Prisma.Decimal(0);
-    }
+    // Refund amount is calculated automatically from the effective refund policy
+    // (appointment override -> branch config). The deadline is also resolved
+    // from the effective policy, not just the appointment snapshot.
+    const refundResult = await calculateRefundOnCancellation(
+      prisma,
+      appointmentId,
+      appointment.branchId,
+      now,
+      appointment.scheduledStart
+    );
+    let refundableAmount = new Prisma.Decimal(refundResult.refundAmount.toString());
 
     await prisma.$transaction(async (tx) => {
       await tx.appointment.update({

@@ -941,9 +941,19 @@ model Appointment {
   depositAmount  Decimal?          @db.Decimal(12, 2)
   // Historical refund-policy snapshot captured at appointment creation so later
   // config changes cannot retroactively make an appointment refundable/non-refundable.
+  // These are kept for backward compatibility with existing code.
   refundPolicyType   RefundPolicyType?
   refundPercentage   Int?
   refundDeadlineHours Int?
+  
+  // Refund policy override for this specific appointment.
+  // When NULL, the branch's BranchBookingConfig is used (dynamic resolution).
+  // When set, this appointment explicitly overrides the branch default.
+  // These are NOT a historical snapshot — branch config changes after creation
+  // still affect appointments that have no override.
+  refundPolicyTypeOverride   RefundPolicyType?
+  refundPercentageOverride   Int?
+  refundDeadlineHoursOverride Int?
   notes          String?
   internalNotes  String?
   bookingSource  BookingSource     @default(ONLINE)

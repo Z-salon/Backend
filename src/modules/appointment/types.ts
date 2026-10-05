@@ -1,4 +1,4 @@
-import { AppointmentStatus, BookingSource, AppointmentActorType, Prisma } from '@prisma/client';
+import { AppointmentStatus, BookingSource, AppointmentActorType, Prisma, RefundPolicyType } from '@prisma/client';
 
 export interface AppointmentCreateInput {
   branchId: string;
@@ -29,6 +29,10 @@ export interface AppointmentResponse {
   status: AppointmentStatus;
   totalAmount: Prisma.Decimal;
   depositAmount: Prisma.Decimal | null;
+  // Refund policy override (null = inherit from branch)
+  refundPolicyTypeOverride: RefundPolicyType | null;
+  refundPercentageOverride: number | null;
+  refundDeadlineHoursOverride: number | null;
   notes: string | null;
   internalNotes: string | null;
   bookingSource: BookingSource;

@@ -93,8 +93,16 @@ export async function getActiveRefundReservations(
 }
 
 /**
- * Refund cap implied by the appointment's historical policy snapshot.
- * NO_REFUND / no snapshot -> nothing is refundable.
+ * Refund cap implied by the effective refund policy for an appointment.
+ *
+ * Resolution order:
+ *   1. If appointment has an explicit override (refundPolicyTypeOverride is set),
+ *      use the override fields.
+ *   2. Otherwise, use the appointment's current refundPolicyType/refundPercentage/
+ *      refundDeadlineHours fields, which may be a snapshot of branch config at
+ *      creation time OR dynamically resolved from the branch config.
+ *
+ * NO_REFUND / no policy -> nothing is refundable.
  */
 export function policyRefundCap(
   policyType: RefundPolicyType | null | undefined,
@@ -106,9 +114,63 @@ export function policyRefundCap(
   if (policyType === 'PARTIAL_REFUND') {
     const pct = refundPercentage ?? 0;
     if (pct <= 0) return ZERO;
+    if (pct >= 100) return verifiedPaid; // 100% or more = full refund
     return verifiedPaid.mul(pct).div(100);
   }
   return ZERO;
+}
+
+/**
+ * Resolve the effective refund policy for an appointment. Single source of truth.
+ *
+ * Priority:
+ *   1. Appointment override (refundPolicyTypeOverride is not null)
+ *   2. The appointment's own base policy (the snapshot captured at creation, so
+ *      later branch-config changes cannot retroactively change an appointment)
+ *   3. Branch configuration (fallback for legacy appointments with no snapshot)
+ *
+ * `null` on the override means "no override / inherit", never "explicitly NO_REFUND".
+ */
+export function resolveEffectiveRefundPolicy(
+  appointment: {
+    refundPolicyType: RefundPolicyType | null | undefined;
+    refundPercentage: number | null | undefined;
+    refundDeadlineHours: number | null | undefined;
+    refundPolicyTypeOverride: RefundPolicyType | null | undefined;
+    refundPercentageOverride: number | null | undefined;
+    refundDeadlineHoursOverride: number | null | undefined;
+  },
+  branchPolicy: {
+    refundPolicyType: RefundPolicyType | null | undefined;
+    refundPercentage: number | null | undefined;
+    refundDeadlineHours: number | null | undefined;
+  }
+): {
+  policyType: RefundPolicyType;
+  refundPercentage: number | null;
+  refundDeadlineHours: number | null;
+  isOverridden: boolean;
+} {
+  // 1. Explicit appointment override wins.
+  const overrideType = appointment.refundPolicyTypeOverride;
+  if (overrideType !== null && overrideType !== undefined) {
+    return {
+      policyType: overrideType,
+      refundPercentage: appointment.refundPercentageOverride ?? null,
+      refundDeadlineHours: appointment.refundDeadlineHoursOverride ?? null,
+      isOverridden: true,
+    };
+  }
+
+  // 2. No override - use the appointment's creation-time snapshot when present,
+  //    otherwise fall back to the current branch configuration.
+  return {
+    policyType: appointment.refundPolicyType ?? branchPolicy.refundPolicyType ?? 'NO_REFUND',
+    refundPercentage: appointment.refundPercentage ?? branchPolicy.refundPercentage ?? null,
+    refundDeadlineHours:
+      appointment.refundDeadlineHours ?? branchPolicy.refundDeadlineHours ?? null,
+    isOverridden: false,
+  };
 }
 
 export interface AppointmentFinancials {
@@ -128,11 +190,55 @@ export interface AppointmentFinancials {
  * Outstanding = finalAgreedAmount - verifiedPaid (never negative), and only exists
  * once the amount is finalized. Refunds are reported separately and never become debt.
  */
+/**
+ * Get the effective refund policy type and percentage for an appointment using the
+ * canonical resolver (override -> appointment snapshot -> branch config).
+ * Used by the financial calculations, which operate under a lock.
+ */
+export async function getEffectiveRefundPolicyForFinancials(
+  db: Db,
+  appointmentId: string
+): Promise<{ policyType: RefundPolicyType | null; refundPercentage: number | null }> {
+  const appointment = await db.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      branchId: true,
+      refundPolicyType: true,
+      refundPercentage: true,
+      refundDeadlineHours: true,
+      refundPolicyTypeOverride: true,
+      refundPercentageOverride: true,
+      refundDeadlineHoursOverride: true,
+    },
+  });
+
+  if (!appointment) {
+    throw new Error(`Appointment ${appointmentId} not found`);
+  }
+
+  const branchConfig = await db.branchBookingConfig.findUnique({
+    where: { branchId: appointment.branchId },
+    select: { refundPolicyType: true, refundPercentage: true, refundDeadlineHours: true },
+  });
+
+  const resolved = resolveEffectiveRefundPolicy(appointment, {
+    refundPolicyType: branchConfig?.refundPolicyType ?? null,
+    refundPercentage: branchConfig?.refundPercentage ?? null,
+    refundDeadlineHours: branchConfig?.refundDeadlineHours ?? null,
+  });
+
+  return { policyType: resolved.policyType, refundPercentage: resolved.refundPercentage };
+}
+
 export async function getAppointmentFinancials(
   db: Db,
   appointmentId: string,
   options?: { excludeRefundRequestId?: string }
 ): Promise<AppointmentFinancials> {
+  // Get the effective refund policy first (this does a separate query with proper select)
+  const effectivePolicy = await getEffectiveRefundPolicyForFinancials(db, appointmentId);
+
+  // Get the full appointment for other fields
   const appointment = await db.appointment.findUnique({ where: { id: appointmentId } });
   if (!appointment) {
     throw new Error(`Appointment ${appointmentId} not found`);
@@ -149,7 +255,8 @@ export async function getAppointmentFinancials(
     outstanding = raw.gt(0) ? raw : ZERO;
   }
 
-  const cap = policyRefundCap(appointment.refundPolicyType, appointment.refundPercentage, verifiedPaid);
+  // Use the effective refund policy (override-aware)
+  const cap = policyRefundCap(effectivePolicy.policyType, effectivePolicy.refundPercentage, verifiedPaid);
   const availableRefundable = cap.minus(refunded).minus(refundReserved);
 
   return {

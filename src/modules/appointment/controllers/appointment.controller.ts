@@ -454,6 +454,34 @@ export class AppointmentController {
       next(error);
     }
   }
+
+  /**
+   * Update appointment refund policy override.
+   * Allows staff to set or remove an appointment-level refund policy override.
+   */
+  async updateRefundPolicy(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const { refundPolicyTypeOverride, refundPercentageOverride, refundDeadlineHoursOverride } = req.body;
+
+      const appointment = await appointmentService.updateRefundPolicyOverride(
+        appointmentId,
+        businessId,
+        userId,
+        {
+          refundPolicyTypeOverride,
+          refundPercentageOverride,
+          refundDeadlineHoursOverride,
+        }
+      );
+
+      res.json(successResponse('Refund policy override updated', appointment));
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const appointmentController = new AppointmentController();
