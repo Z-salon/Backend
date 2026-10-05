@@ -19,6 +19,8 @@ import customerConfirmationRoutes from '../modules/appointment/routes/customer-c
 import refundRequestRoutes from '../modules/payment/routes/refund-request.routes';
 import publicFeedbackRoutes from '../modules/feedback/routes/public-feedback.routes';
 import adminFeedbackRoutes from '../modules/feedback/routes/admin-feedback.routes';
+import expenseRoutes from '../modules/finance/routes/expense.routes';
+import financeReportRoutes from '../modules/finance/routes/finance-report.routes';
 import { config } from '../config/env';
 
 const router = Router();
@@ -43,6 +45,8 @@ router.use(`/public`, customerConfirmationRoutes);
 router.use(`/`, refundRequestRoutes);
 router.use(`/feedback`, publicFeedbackRoutes);
 router.use(`/`, adminFeedbackRoutes);
+router.use(`/`, financeReportRoutes);
+router.use(`/`, expenseRoutes);
 
 /**
  * @openapi

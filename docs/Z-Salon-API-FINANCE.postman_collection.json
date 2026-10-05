@@ -1,0 +1,535 @@
+{
+  "info": {
+    "_postman_id": "z-salon-finance-expense-refund-20261005",
+    "name": "Z-Salon API — Finance, Expense & Refunds",
+    "description": "Postman collection for the Z-Salon finance, expense and refund endpoints.\n\nCovers:\n- Expense: categories, ledger, payments, void\n- Finance Reports: summary, revenue, collections, refunds, outstanding, expenses (GET-only)\n- Refunds: admin queue (list/get/approve/reject/create/complete), refundable balance\n- Per-appointment financials and customer outstanding\n\n## Setup\n1. Set `baseUrl` and `businessId` in collection variables.\n2. Run **Auth › Login** first — it captures `accessToken` automatically.\n3. Create a branch, customer, service, staff and payment method, then capture their IDs from responses (scripts are included on key requests).\n\n## Time Handling\n- All datetimes in request bodies must be **ISO 8601** (e.g. `2026-10-15T10:00:00.000+03:00` — Ethiopia is GMT+3 / Africa/Addis_Ababa).\n- `from`/`to` accept either full ISO datetime or plain `YYYY-MM-DD`; date-only bounds span the whole day in the business timezone.\n- Responses return ISO 8601 UTC (`Z`).\n- Currency amounts are decimal strings with 2 dp.\n\nFull reference: `docs/ENDPOINTS-GUIDE-FINANCE.md`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "z-salon-backend"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "businessId", "value": "REPLACE_WITH_BUSINESS_ID", "type": "string" },
+    { "key": "branchId", "value": "REPLACE_WITH_BRANCH_ID", "type": "string" },
+    { "key": "customerId", "value": "REPLACE_WITH_CUSTOMER_ID", "type": "string" },
+    { "key": "customerPhone", "value": "+251912345678", "type": "string" },
+    { "key": "serviceId", "value": "REPLACE_WITH_SERVICE_ID", "type": "string" },
+    { "key": "staffId", "value": "REPLACE_WITH_STAFF_ID", "type": "string" },
+    { "key": "appointmentId", "value": "REPLACE_WITH_APPOINTMENT_ID", "type": "string" },
+    { "key": "paymentMethodId", "value": "REPLACE_WITH_PAYMENT_METHOD_ID", "type": "string" },
+    { "key": "usageId", "value": "REPLACE_WITH_USAGE_ID", "type": "string" },
+    { "key": "paymentId", "value": "REPLACE_WITH_PAYMENT_ID", "type": "string" },
+    { "key": "refundRequestId", "value": "REPLACE_WITH_REFUND_REQUEST_ID", "type": "string" },
+    { "key": "categoryId", "value": "REPLACE_WITH_CATEGORY_ID", "type": "string" },
+    { "key": "expenseId", "value": "REPLACE_WITH_EXPENSE_ID", "type": "string" },
+    { "key": "availabilityDate", "value": "2026-10-15", "type": "string" },
+    { "key": "bookingStart", "value": "2026-10-15T09:00:00.000+03:00", "type": "string" },
+    { "key": "verificationToken", "value": "", "type": "string" },
+    { "key": "feedbackToken", "value": "REPLACE_FEEDBACK_TOKEN", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+251911000000\",\n  \"password\": \"Str0ngPass1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Returns `accessToken` (use it as `Authorization: Bearer …`) and sets the `refreshToken` cookie. Writes `accessToken` into collection variables."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (responseCode.code === 200) {",
+                  "  let json = pm.response.json();",
+                  "  if (json?.data?.accessToken) { pm.collectionVariables.set('accessToken', json.data.accessToken); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Expense — Categories",
+      "item": [
+        {
+          "name": "Create category",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rent\",\n  \"description\": \"Studio rent\",\n  \"isActive\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expense-categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expense-categories"]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_RECORD_EXPENSE"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (responseCode.code === 201) {",
+                  "  const id = pm.response.json().data?.id;",
+                  "  if (id) pm.collectionVariables.set('categoryId', id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expense-categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expense-categories"]
+            }
+          }
+        },
+        {
+          "name": "Update category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rent Updated\",\n  \"description\": \"Studio rent\",\n  \"isActive\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expense-categories/:categoryId",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expense-categories", ":categoryId"],
+              "query": [
+                { "key": "categoryId", "value": "{{categoryId}}" }
+              ]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_RECORD_EXPENSE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Expense — Ledger",
+      "item": [
+        {
+          "name": "Record expense",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"branchId\": \"{{branchId}}\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"amount\": 500,\n  \"amountPaid\": 500,\n  \"expenseDate\": \"2026-10-15T10:00:00.000+03:00\",\n  \"dueDate\": \"2026-10-22\",\n  \"vendor\": \"Ethiopia Utilities\",\n  \"receiptNumber\": \"REC-1001\",\n  \"description\": \"Monthly utilities\",\n  \"notes\": \"Paid by bank transfer\",\n  \"paymentMethodId\": \"{{paymentMethodId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expenses",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expenses"]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_RECORD_EXPENSE\n\n`amountPaid` may be omitted (UNPAID). Cannot exceed `amount`. Status derived server-side: UNPAID / PARTIALLY_PAID / PAID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (responseCode.code === 201) {",
+                  "  const id = pm.response.json().data?.id;",
+                  "  if (id) pm.collectionVariables.set('expenseId', id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "List expenses",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expenses?from=2026-10-01&to=2026-10-31&branchId={{branchId}}&status=UNPAID&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expenses"],
+              "query": [
+                { "key": "from", "value": "2026-10-01" },
+                { "key": "to", "value": "2026-10-31" },
+                { "key": "branchId", "value": "{{branchId}}" },
+                { "key": "status", "value": "UNPAID" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get expense",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expenses/{{expenseId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expenses", "{{expenseId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update expense",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 750,\n  \"description\": \"Updated rent description\",\n  \"expenseDate\": \"2026-10-16T10:00:00.000+03:00\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expenses/{{expenseId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expenses", "{{expenseId}}"]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_RECORD_EXPENSE\n\n`amount` cannot go below `amountPaid`. `amountPaid` itself is NOT settable here — use payments."
+          }
+        },
+        {
+          "name": "Record payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100,\n  \"paidAt\": \"2026-10-15T11:30:00.000+03:00\",\n  \"paymentMethodId\": \"{{paymentMethodId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expenses/{{expenseId}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expenses", "{{expenseId}}", "payments"]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_RECORD_EXPENSE\n\nSupports partial payments; cannot push `amountPaid` past `amount`."
+          }
+        },
+        {
+          "name": "Void expense",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Duplicate entry\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/expenses/{{expenseId}}/void",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "expenses", "{{expenseId}}", "void"]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_RECORD_EXPENSE\n\nSoft delete: VOIDED + voidedAt + voidReason. Idempotent. Excluded from all finance reports."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Finance Reports (GET-only)",
+      "item": [
+        {
+          "name": "Summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/finance/summary?from=2026-10-01&to=2026-10-31&branchId={{branchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "finance", "summary"],
+              "query": [
+                { "key": "from", "value": "2026-10-01" },
+                { "key": "to", "value": "2026-10-31" },
+                { "key": "branchId", "value": "{{branchId}}" }
+              ]
+            },
+            "description": "Auth: Bearer + membership + FINANCE_VIEW | FINANCE_VIEW_REPORTS | REPORT_VIEW\n\nSummary: totalRevenue, totalPaymentsCollected, totalRefunds, totalOutstanding, totalExpenses, totalExpensesPaid, totalExpensesUnpaid, netOperatingResult (= revenue − incurred), netCashMovement (= collected − refunds − expensesPaid), revenueBasis=EARNED, plus byBranch / byService / byPaymentMethod / byExpenseCategory / byDate."
+          }
+        },
+        {
+          "name": "Revenue",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/finance/revenue?from=2026-10-01&to=2026-10-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "finance", "revenue"],
+              "query": [
+                { "key": "from", "value": "2026-10-01" },
+                { "key": "to", "value": "2026-10-31" }
+              ]
+            },
+            "description": "Revenue = SUM(finalAgreedAmount) of COMPLETED appointments on completedAt (earned basis)."
+          }
+        },
+        {
+          "name": "Collections",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/finance/collections?from=2026-10-01&to=2026-10-31&branchId={{branchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "finance", "collections"],
+              "query": [
+                { "key": "from", "value": "2026-10-01" },
+                { "key": "to", "value": "2026-10-31" },
+                { "key": "branchId", "value": "{{branchId}}" }
+              ]
+            },
+            "description": "Collections = verified payments (PAID / PARTIALLY_REFUNDED / REFUNDED) on paidAt. netCollected = collected − completedRefunds."
+          }
+        },
+        {
+          "name": "Refunds",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/finance/refunds?from=2026-10-01&to=2026-10-31&branchId={{branchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "finance", "refunds"],
+              "query": [
+                { "key": "from", "value": "2026-10-01" },
+                { "key": "to", "value": "2026-10-31" },
+                { "key": "branchId", "value": "{{branchId}}" }
+              ]
+            },
+            "description": "Refund report: only COMPLETED refunds count as cash out (completedRefundAmount/completedRefundCount). byStatus shows requested vs approved per PENDING/APPROVED/REJECTED/COMPLETED."
+          }
+        },
+        {
+          "name": "Outstanding",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/finance/outstanding?branchId={{branchId}}&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "finance", "outstanding"],
+              "query": [
+                { "key": "branchId", "value": "{{branchId}}" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "Current snapshot: only appointments with outstanding > 0, paginated (DB COUNT + LIMIT/OFFSET). Row figures come from the canonical getAppointmentFinancials (outstanding = GREATEST(finalAgreedAmount − verifiedPaid, 0))."
+          }
+        },
+        {
+          "name": "Expenses",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/finance/expenses?from=2026-10-01&to=2026-10-31&branchId={{branchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "finance", "expenses"],
+              "query": [
+                { "key": "from", "value": "2026-10-01" },
+                { "key": "to", "value": "2026-10-31" },
+                { "key": "branchId", "value": "{{branchId}}" }
+              ]
+            },
+            "description": "Expense report: incurred (amount), paid (amountPaid), unpaid split, byCategory / byBranch / byDate. VOIDED expenses excluded."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Refunds — Admin Queue",
+      "item": [
+        {
+          "name": "List refund requests",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests?status=PENDING&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests"],
+              "query": [
+                { "key": "status", "value": "PENDING" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get refund request",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}"]
+            }
+          }
+        },
+        {
+          "name": "Approve refund",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}", "approve"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nIdempotent. PENDING→APPROVED. APPROVED→same record. REJECTED→400. Sets approvedAmount (default = requestedAmount), reviewedAt, reviewedById. Sends approval SMS (best effort)."
+          }
+        },
+        {
+          "name": "Reject refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rejectionReason\": \"Service was already fully delivered\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}/reject",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}", "reject"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nAPPROVED→REJECTED. REJECTED→same record (idempotent). COMPLETED→400. rejectionReason required."
+          }
+        },
+        {
+          "name": "Get refundable balance",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/refundable",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "refundable"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nCanonical financial state for the appointment: originalAmount, finalAgreedAmount, finalized, verifiedPaid, outstanding, refunded, refundReserved, refundable. Policy resolution: override → appointment snapshot → branch config."
+          }
+        },
+        {
+          "name": "Create refund request",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"amount\": 200,\n  \"paymentId\": \"{{paymentId}}\",\n  \"reason\": \"Customer cancellation\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nValidation: appointment belongs to business; status CANCELLED / NO_SHOW / COMPLETED; requestedAmount > 0 and <= refundable; paymentId (if given) belongs to appointment and is not VOIDED."
+          }
+        },
+        {
+          "name": "Complete refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 200,\n  \"reference\": \"TB-PAY-88123\",\n  \"note\": \"Transferred to account 12345\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/refund-requests/{{refundRequestId}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "refund-requests", "{{refundRequestId}}", "complete"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nOnly APPROVED requests can be completed. Moves money: applies amount to verified payments (oldest first), status → COMPLETED, completedAt, completedById. amount cannot exceed approvedAmount."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Reference — Canonical Money & Outstanding",
+      "item": [
+        {
+          "name": "Get appointment financials",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/appointments/{{appointmentId}}/financials",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "appointments", "{{appointmentId}}", "financials"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nOne canonical calculation reused by the reports and the outstanding endpoint: verifiedPaid, outstanding, refunded, refundable."
+          }
+        },
+        {
+          "name": "Get customer outstanding",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/businesses/{{businessId}}/customers/{{customerId}}/outstanding",
+              "host": ["{{baseUrl}}"],
+              "path": ["businesses", "{{businessId}}", "customers", "{{customerId}}", "outstanding"]
+            },
+            "description": "Auth: Bearer + membership + branch scope.\n\nAggregated across finalized appointments: totalOutstanding, totalPaid, totalRefunded, plus per-appointment breakdown."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Conventions",
+      "item": [
+        {
+          "name": "Time Handling",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Health check. Use as a no-token sanity check for the base URL."
+          }
+        }
+      ]
+    }
+  ]
+}
