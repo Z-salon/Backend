@@ -18,6 +18,7 @@ const staff_routes_1 = __importDefault(require("../modules/staff/routes/staff.ro
 const customer_routes_1 = __importDefault(require("../modules/customer/routes/customer.routes"));
 const availability_routes_1 = __importDefault(require("../modules/services/routes/availability.routes"));
 const appointment_routes_1 = __importDefault(require("../modules/appointment/routes/appointment.routes"));
+const appointment_follow_up_routes_1 = __importDefault(require("../modules/appointment/routes/appointment-follow-up.routes"));
 const customer_appointment_routes_1 = __importDefault(require("../modules/customer/routes/customer-appointment.routes"));
 const public_booking_routes_1 = __importDefault(require("../modules/appointment/routes/public-booking.routes"));
 const customer_confirmation_routes_1 = __importDefault(require("../modules/appointment/routes/customer-confirmation.routes"));
@@ -41,6 +42,7 @@ router.use(`/`, staff_routes_1.default);
 router.use(`/`, customer_routes_1.default);
 router.use(`/`, availability_routes_1.default);
 router.use(`/`, appointment_routes_1.default);
+router.use(`/`, appointment_follow_up_routes_1.default);
 router.use(`/customer`, customer_appointment_routes_1.default);
 router.use(`/public`, public_booking_routes_1.default);
 router.use(`/public`, customer_confirmation_routes_1.default);

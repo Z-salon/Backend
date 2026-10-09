@@ -347,7 +347,10 @@ export const branchBookingConfigUpdateSchema = z.object({
     customerConfirmationEnabled: z.boolean().optional(),
     confirmationReminderHours: z.number().int().min(0).optional(),
     confirmationDeadlineHours: z.number().int().min(0).optional(),
-    sameDayConfirmationReminderHours: z.number().int().min(0).optional(),
+    // Second acknowledgement reminder: at least 1 hour before the appointment.
+    // Cross-field ordering vs. the deadline is enforced in the service against
+    // the merged configuration.
+    sameDayConfirmationReminderHours: z.number().int().min(1).optional(),
     pendingAppointmentExpirationMinutes: z.number().int().min(0).optional(),
   }).optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {

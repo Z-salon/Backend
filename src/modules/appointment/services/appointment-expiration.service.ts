@@ -1,5 +1,7 @@
 import { prisma } from '../../../libs/prisma';
 import { AppointmentStatus, AppointmentActorType } from '@prisma/client';
+import { appointmentReminderService } from './appointment-reminder.service';
+import { appointmentActionTokenService } from './appointment-action-token.service';
 
 export class AppointmentExpirationService {
   /**
@@ -67,7 +69,16 @@ export class AppointmentExpirationService {
                 reason: `Appointment expired after ${config.pendingAppointmentExpirationMinutes} minutes of being pending.`,
               }
             });
-            
+
+            // A pending appointment is never eligible for acknowledgement
+            // reminders, but reconcile defensively and revoke any issued link.
+            await appointmentReminderService.onAppointmentIneligible(
+              tx,
+              appointment.id,
+              'Appointment expired while pending'
+            );
+            await appointmentActionTokenService.revokeForAppointment(tx, appointment.id);
+
           });
           expiredCount++;
         } catch (error) {

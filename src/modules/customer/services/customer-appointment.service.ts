@@ -4,6 +4,8 @@ import { AppointmentStatus, AppointmentActorType, Prisma } from '@prisma/client'
 import { auditLogService } from '../../business/services/audit-log.service';
 import { availabilityService } from '../../services/availability/availability.service';
 import { appointmentService } from '../../appointment/services/appointment.service';
+import { appointmentReminderService } from '../../appointment/services/appointment-reminder.service';
+import { appointmentActionTokenService } from '../../appointment/services/appointment-action-token.service';
 import { sendAppointmentCancellationSms } from '../../auth/sms/sms.service';
 import { calculateRefundOnCancellation } from '../../payment/services/refund-policy.service';
 
@@ -212,6 +214,12 @@ export class CustomerAppointmentService {
         tx
       );
 
+      await appointmentReminderService.cancelOpenFollowUps(tx, appointmentId, 'Appointment rescheduled');
+      await appointmentReminderService.scheduleForAppointment(tx, appointmentId, {
+        reason: 'Appointment rescheduled',
+      });
+      await appointmentActionTokenService.extendExpiryForAppointment(tx, appointmentId, newEndTime);
+
       return updatedAppt;
     });
 
@@ -286,18 +294,19 @@ export class CustomerAppointmentService {
           status: AppointmentStatus.CANCELLED,
           cancelledAt: new Date()
         }
-      });
-
-      await tx.appointmentStatusHistory.create({
-        data: {
-          appointmentId,
-          statusFrom: appointment.status,
-          statusTo: AppointmentStatus.CANCELLED,
-          actorId: customerId,
-          actorType: AppointmentActorType.USER, // Note: We might want a CUSTOMER type if one existed
-          reason: reason || 'Customer cancelled',
-        }
-      });
+      });        await tx.appointmentStatusHistory.create({
+          data: {
+            appointmentId,
+            statusFrom: appointment.status,
+            statusTo: AppointmentStatus.CANCELLED,
+            // Customer-initiated: actorId must reference a User (FK) and a
+            // customer may have no account, so it is recorded as a system
+            // transition with the customer context in the reason.
+            actorId: null,
+            actorType: AppointmentActorType.SYSTEM,
+            reason: reason || 'Customer cancelled',
+          }
+        });
 
       if (refundableAmount.gt(0)) {
         await tx.refundRequest.create({
@@ -313,7 +322,7 @@ export class CustomerAppointmentService {
       await auditLogService.createAuditLog(
         {
           businessId: appointment.businessId,
-          actorId: customerId,
+          actorId: null,
           action: 'APPOINTMENT_CANCELLED_BY_CUSTOMER',
           entityType: 'Appointment',
           entityId: appointmentId,
@@ -322,6 +331,13 @@ export class CustomerAppointmentService {
         },
         tx
       );
+
+      await appointmentReminderService.onAppointmentIneligible(
+        tx,
+        appointmentId,
+        `Appointment cancelled by customer: ${reason || 'no reason given'}`
+      );
+      await appointmentActionTokenService.revokeForAppointment(tx, appointmentId);
     });
 
     // Notify the customer (best-effort). This is the single notification point for

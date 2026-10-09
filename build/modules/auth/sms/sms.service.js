@@ -10,6 +10,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSmsProvider = getSmsProvider;
+exports.formatAppointmentDateTime = formatAppointmentDateTime;
 exports.sendOtpSms = sendOtpSms;
 exports.sendInvitationLinkSms = sendInvitationLinkSms;
 exports.sendAppointmentConfirmationSms = sendAppointmentConfirmationSms;
@@ -17,9 +18,14 @@ exports.sendConfirmationRequestSms = sendConfirmationRequestSms;
 exports.sendAppointmentCancellationSms = sendAppointmentCancellationSms;
 exports.sendRefundApprovedSms = sendRefundApprovedSms;
 exports.sendRefundRejectedSms = sendRefundRejectedSms;
+exports.sendPendingApprovalSms = sendPendingApprovalSms;
+exports.sendApprovalNotificationSms = sendApprovalNotificationSms;
+exports.sendAcknowledgementReminderSms = sendAcknowledgementReminderSms;
 exports.buildConfirmationUrl = buildConfirmationUrl;
 exports.sendFeedbackRequestSms = sendFeedbackRequestSms;
+const luxon_1 = require("luxon");
 const console_sms_provider_1 = require("./console-sms.provider");
+const env_1 = require("../../../config/env");
 let smsProvider;
 function getSmsProvider() {
     if (!smsProvider) {
@@ -28,12 +34,26 @@ function getSmsProvider() {
     return smsProvider;
 }
 function createSmsProvider() {
-    // In production, you would configure a real SMS provider here
-    // For example:
-    // if (config.sms.provider === 'twilio') {
-    //   return new TwilioSmsProvider(config.sms.twilioAccountSid, config.sms.twilioAuthToken);
-    // }
+    // NOTE: only the console provider is implemented. Real production delivery is
+    // NOT enabled until a provider (e.g. Twilio / Africa's Talking) is added here
+    // and configured through SMS_PROVIDER + provider credentials. ConsoleSmsProvider
+    // intentionally no-ops in production rather than pretending a message was sent.
+    if (env_1.config.isProduction) {
+        console.error('[SMS] Real SMS delivery is not enabled (SMS_PROVIDER=%s). Customer reminder/confirmation messages will NOT be delivered in production until a provider is implemented.', env_1.config.sms.provider);
+    }
     return new console_sms_provider_1.ConsoleSmsProvider();
+}
+/**
+ * Format an appointment instant in the branch timezone for customer messages.
+ * Timestamps are stored as UTC instants; all customer-facing text uses the
+ * branch's local time.
+ */
+function formatAppointmentDateTime(scheduledStart, timezone) {
+    const dt = luxon_1.DateTime.fromJSDate(scheduledStart).setZone(timezone);
+    if (!dt.isValid) {
+        return luxon_1.DateTime.fromJSDate(scheduledStart).toUTC().toFormat("ccc, dd LLL yyyy 'at' HH:mm 'UTC'");
+    }
+    return dt.toFormat("ccc, dd LLL yyyy 'at' hh:mm a");
 }
 function sendOtpSms(phone, otp) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -81,6 +101,41 @@ function sendRefundRejectedSms(phone, scheduledStart, rejectionReason) {
         const provider = getSmsProvider();
         const start = scheduledStart.toLocaleString();
         yield provider.sendMessage(phone, `Your refund request for the appointment on ${start} has been rejected.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`);
+    });
+}
+/**
+ * Sends the initial notification (view-only link) for an appointment awaiting
+ * staff approval or prepayment verification. Does NOT request acknowledgement.
+ */
+function sendPendingApprovalSms(phone, appointmentUrl, scheduledStart, timezone, branchName) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const when = formatAppointmentDateTime(scheduledStart, timezone);
+        yield provider.sendMessage(phone, `${branchName}: We received your appointment request for ${when}. It is awaiting confirmation. View details: ${appointmentUrl}`);
+    });
+}
+/**
+ * Sends the approved/confirmed notification after the existing approval or
+ * prepayment workflow confirms the appointment. Includes the self-service link
+ * but does not demand acknowledgement.
+ */
+function sendApprovalNotificationSms(phone, appointmentUrl, scheduledStart, timezone, branchName) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const when = formatAppointmentDateTime(scheduledStart, timezone);
+        yield provider.sendMessage(phone, `${branchName}: Your appointment on ${when} is confirmed. View, reschedule or cancel: ${appointmentUrl}`);
+    });
+}
+/**
+ * Acknowledgement reminder. `stage` distinguishes the first reminder from the
+ * shorter-notice second reminder so the copy can communicate urgency.
+ */
+function sendAcknowledgementReminderSms(phone, appointmentUrl, scheduledStart, timezone, branchName, stage) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        const when = formatAppointmentDateTime(scheduledStart, timezone);
+        const lead = stage === 'FIRST' ? 'tomorrow' : 'soon';
+        yield provider.sendMessage(phone, `${branchName}: Reminder - your appointment is ${lead} on ${when}. Please confirm: ${appointmentUrl}`);
     });
 }
 /**

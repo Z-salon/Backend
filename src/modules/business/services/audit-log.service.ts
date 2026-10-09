@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 
 export interface AuditLogInput {
   businessId: string;
-  actorId: string;
+  /** Null for system/customer-initiated actions with no staff User actor. */
+  actorId: string | null;
   action: string;
   entityType: string;
   entityId?: string;

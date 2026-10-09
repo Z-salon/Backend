@@ -7,6 +7,8 @@
     "start:dev": "npx nodemon",
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && node build/server.js",
+    "start:worker": "npm run build && node build/workers/reminder-worker.js",
+    "start:worker:dev": "ts-node src/workers/reminder-worker.ts",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
     "prisma:generate": "prisma generate",

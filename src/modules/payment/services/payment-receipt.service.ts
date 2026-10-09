@@ -3,6 +3,7 @@ import { ApiError } from '../../../utils/api-error';
 import { auditLogService } from '../../business/services/audit-log.service';
 import { AppointmentStatus, AppointmentActorType, PaymentVerificationStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { appointmentReminderService } from '../../appointment/services/appointment-reminder.service';
 
 export class PaymentReceiptService {
   /**
@@ -218,6 +219,12 @@ export class PaymentReceiptService {
               reason: 'Payment receipt approved — appointment confirmed',
             },
           });
+
+          // The appointment is now eligible: schedule acknowledgement reminders
+          // in the same transaction as the confirmation.
+          await appointmentReminderService.scheduleForAppointment(tx, appointmentId, {
+            reason: 'Prepayment verified',
+          });
         }
 
         await auditLogService.createAuditLog(
@@ -255,17 +262,32 @@ export class PaymentReceiptService {
       return updatedReceipt;
     }).then(async (updatedReceipt) => {
       if (data.action === 'APPROVE' && appointment.status === AppointmentStatus.PENDING) {
-        const customer = await prisma.customer.findUnique({
-          where: { id: appointment.customerId },
-          include: { phones: true },
-        });
-        const phone = customer?.phones.find((p) => p.isPrimary)?.phone || customer?.phones[0]?.phone;
-        if (phone) {
-          try {
-            const { sendAppointmentConfirmationSms } = await import('../../auth/sms/sms.service');
-            await sendAppointmentConfirmationSms(phone, appointment.scheduledStart, appointment.scheduledEnd);
-          } catch (err) {
-            console.error('Failed to send confirmation SMS after receipt approval', err);
+        // Prefer the approval notification with the self-service link. When the
+        // branch has customer confirmation disabled this returns null and we
+        // fall back to the existing generic confirmation SMS.
+        const { customerConfirmationService } = await import(
+          '../../appointment/services/customer-confirmation.service'
+        );
+        const notification = await customerConfirmationService
+          .dispatchBookingNotification(appointmentId)
+          .catch((err) => {
+            console.error('Failed to send approval notification after receipt approval', err);
+            return null;
+          });
+
+        if (!notification) {
+          const customer = await prisma.customer.findUnique({
+            where: { id: appointment.customerId },
+            include: { phones: true },
+          });
+          const phone = customer?.phones.find((p) => p.isPrimary)?.phone || customer?.phones[0]?.phone;
+          if (phone) {
+            try {
+              const { sendAppointmentConfirmationSms } = await import('../../auth/sms/sms.service');
+              await sendAppointmentConfirmationSms(phone, appointment.scheduledStart, appointment.scheduledEnd);
+            } catch (err) {
+              console.error('Failed to send confirmation SMS after receipt approval', err);
+            }
           }
         }
       }

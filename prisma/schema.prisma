@@ -468,7 +468,9 @@ model InvitationRoleBranch {
 model AuditLog {
   id         String   @id @default(uuid())
   businessId String
-  actorId    String
+  /// Nullable because system/customer-initiated actions (e.g. a customer
+  /// cancelling via their self-service link) have no staff User actor.
+  actorId    String?
   action     String
   entityType String
   entityId   String?
@@ -477,7 +479,7 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  actor    User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  actor    User?    @relation(fields: [actorId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([actorId])
@@ -976,6 +978,12 @@ model Appointment {
   confirmationMethod  String?
   confirmedById       String?
 
+  /// Monotonic version incremented every time the reminder schedule is (re)built
+  /// for this appointment. Reminder jobs carry the version they were created for
+  /// so stale jobs from a previous schedule can never be delivered after a
+  /// reschedule (see AppointmentReminder.scheduleVersion).
+  reminderScheduleVersion Int @default(0)
+
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -993,6 +1001,9 @@ model Appointment {
   paymentReceipts    PaymentReceipt[]
   payments           AppointmentPayment[]
   feedbackRequest    FeedbackRequest?
+  reminders          AppointmentReminder[]
+  followUps          AppointmentFollowUp[]
+  actionTokens       AppointmentActionToken[]
 
   @@index([businessId])
   @@index([branchId])
@@ -1366,6 +1377,141 @@ model FeedbackResponse {
 
 /// Operational payment state of an incurred expense. This is intentionally simple:
 /// it distinguishes "incurred" from "actually paid", not double-entry accounting.
+/// Durable, PostgreSQL-backed background work for the appointment confirmation
+/// workflow. Status values follow the project's existing UPPER_SNAKE enum style.
+enum ReminderJobType {
+  FIRST_REMINDER
+  SECOND_REMINDER
+  DEADLINE_FOLLOWUP
+}
+
+enum ReminderJobStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+  SKIPPED
+}
+
+enum ReminderDeliveryStatus {
+  SUCCESS
+  FAILED
+}
+
+enum FollowUpStatus {
+  OPEN
+  RESOLVED
+  CANCELLED
+}
+
+/// Staff resolution outcomes. Intentionally limited to the three supported
+/// outcomes; there is no UNREACHABLE outcome.
+enum FollowUpOutcome {
+  CONFIRMED
+  CANCELLED
+  RESCHEDULED
+}
+
+/// Persisted, revocable opaque token used by the public customer self-service
+/// link. Only the SHA-256 hash of the token is stored; the raw token is never
+/// persisted or logged.
+model AppointmentActionToken {
+  id            String    @id @default(uuid())
+  businessId    String
+  appointmentId String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@index([expiresAt])
+  @@index([businessId])
+}
+
+/// One durable reminder/deadline job per appointment schedule version and type.
+/// The worker claims rows with FOR UPDATE SKIP LOCKED; lease fields allow
+/// crash recovery.
+model AppointmentReminder {
+  id                String            @id @default(uuid())
+  appointmentId     String
+  businessId        String
+  branchId          String
+  type              ReminderJobType
+  status            ReminderJobStatus @default(PENDING)
+  scheduledFor      DateTime
+  scheduleVersion   Int
+  attemptCount      Int               @default(0)
+  maxAttempts       Int               @default(5)
+  nextAttemptAt     DateTime
+  claimedAt         DateTime?
+  claimedBy         String?
+  leaseExpiresAt    DateTime?
+  lastError         String?
+  sentAt            DateTime?
+  completedAt       DateTime?
+  providerMessageId String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  appointment Appointment              @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  attempts    ReminderDeliveryAttempt[]
+
+  @@unique([appointmentId, type, scheduleVersion])
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
+  @@index([appointmentId])
+  @@index([branchId])
+}
+
+model ReminderDeliveryAttempt {
+  id                String                 @id @default(uuid())
+  reminderId        String
+  attemptNumber     Int
+  status            ReminderDeliveryStatus
+  errorMessage      String?
+  providerMessageId String?
+  createdAt         DateTime               @default(now())
+
+  reminder AppointmentReminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@index([reminderId])
+}
+
+/// Durable staff follow-up created when the response deadline passes without a
+/// customer acknowledgement. History is preserved: a resolved/cancelled row is
+/// never overwritten; a deliberate new contact attempt creates a new row.
+model AppointmentFollowUp {
+  id              String          @id @default(uuid())
+  appointmentId   String
+  businessId      String
+  branchId        String
+  scheduleVersion Int
+  status          FollowUpStatus  @default(OPEN)
+  reason          String
+  deadlineAt      DateTime
+  outcome         FollowUpOutcome?
+  handledById     String?
+  handledAt       DateTime?
+  note            String?
+  /// Who resolved the follow-up: STAFF or CUSTOMER (self-service).
+  resolvedVia     String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+  @@index([branchId, status])
+  @@index([appointmentId])
+  @@index([status, deadlineAt])
+}
+
 enum ExpenseStatus {
   UNPAID
   PARTIALLY_PAID

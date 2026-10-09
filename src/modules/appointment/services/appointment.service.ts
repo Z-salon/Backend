@@ -19,6 +19,8 @@ import { AppointmentStatus, BookingSource, AppointmentActorType, EmployeeAssignm
 import { Prisma } from '@prisma/client';
 import { sendAppointmentConfirmationSms } from '../../auth/sms/sms.service';
 import { feedbackRequestService } from '../../feedback/services/feedback-request.service';
+import { appointmentReminderService } from './appointment-reminder.service';
+import { appointmentActionTokenService } from './appointment-action-token.service';
 import {
   getAppointmentFinancials,
   lockAppointmentPayments,
@@ -239,20 +241,34 @@ export class AppointmentService {
         );
       }
 
+      // Schedule acknowledgement reminders in the same transaction as creation so
+      // a crash cannot leave a confirmed appointment with no reminders. Whether
+      // anything is scheduled depends on branch config and eligibility; this is
+      // restricted to ONLINE bookings to preserve existing booking semantics.
+      if (
+        bookingSource === BookingSource.ONLINE &&
+        initialStatus === AppointmentStatus.CONFIRMED
+      ) {
+        await appointmentReminderService.scheduleForAppointment(tx, appointment.id, {
+          reason: 'Appointment created',
+        });
+      }
+
       return appointment;
     }, { timeout: 10000 });
 
-    const confirmationRequired =
+    const wantsSelfServiceLink =
       bookingSource === BookingSource.ONLINE &&
-      initialStatus === AppointmentStatus.CONFIRMED &&
-      bookingConfig?.customerConfirmationEnabled === true;
+      (initialStatus === AppointmentStatus.PENDING ||
+        (initialStatus === AppointmentStatus.CONFIRMED &&
+          bookingConfig?.customerConfirmationEnabled === true));
 
-    if (confirmationRequired) {
+    if (wantsSelfServiceLink) {
       // Imported lazily to avoid a circular import at module load time
       // (customer-confirmation -> customer-appointment -> appointment).
       const { customerConfirmationService } = await import('./customer-confirmation.service');
-      await customerConfirmationService.sendConfirmationRequest(appointment.id).catch((err) => {
-        console.error('Failed to send customer confirmation request', err);
+      await customerConfirmationService.dispatchBookingNotification(appointment.id).catch((err) => {
+        console.error('Failed to send booking notification', err);
       });
     } else if (initialStatus === AppointmentStatus.CONFIRMED) {
       await this.sendConfirmationSms(customer, appointment.scheduledStart, appointment.scheduledEnd);
@@ -545,7 +561,41 @@ export class AppointmentService {
       throw new ApiError(404, 'Appointment not found', ErrorCodes.NOT_FOUND);
     }
 
-    return this.mapToResponse(appointment, { includeExtensions: true });
+    const mapped = this.mapToResponse(appointment, { includeExtensions: true });
+
+    // Staff-facing follow-up warning + reminder history for the detail view.
+    const [openFollowUp, reminders] = await Promise.all([
+      prisma.appointmentFollowUp.findFirst({
+        where: { appointmentId: id, status: 'OPEN' },
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          deadlineAt: true,
+          scheduleVersion: true,
+        },
+      }),
+      prisma.appointmentReminder.findMany({
+        where: { appointmentId: id },
+        orderBy: { scheduledFor: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          scheduledFor: true,
+          attemptCount: true,
+          sentAt: true,
+          lastError: true,
+        },
+      }),
+    ]);
+
+    return {
+      ...mapped,
+      needsFollowUp: Boolean(openFollowUp),
+      followUp: openFollowUp,
+      reminders,
+    };
   }
 
   async getAppointments(businessId: string, userId: string, query: any) {
@@ -770,8 +820,37 @@ export class AppointmentService {
         tx
       );
 
+      // Approval (PENDING -> CONFIRMED) makes the appointment eligible for
+      // acknowledgement reminders. Reminder scheduling is idempotent and
+      // respects branch configuration. Terminal transitions reconcile instead.
+      if (status === AppointmentStatus.CONFIRMED) {
+        await appointmentReminderService.scheduleForAppointment(tx, appointmentId, {
+          reason: 'Appointment approved',
+        });
+      } else if (
+        status === AppointmentStatus.CANCELLED ||
+        status === AppointmentStatus.NO_SHOW
+      ) {
+        await appointmentReminderService.onAppointmentIneligible(
+          tx,
+          appointmentId,
+          `Appointment ${status}`
+        );
+        await appointmentActionTokenService.revokeForAppointment(tx, appointmentId);
+      }
+
       return updated;
     });
+
+    if (status === AppointmentStatus.CONFIRMED && appointment.status === AppointmentStatus.PENDING) {
+      // Send the approval/confirmation notification with the self-service link
+      // after commit. dispatchBookingNotification only sends when the branch has
+      // customer confirmation enabled.
+      const { customerConfirmationService } = await import('./customer-confirmation.service');
+      await customerConfirmationService.dispatchBookingNotification(appointmentId).catch((err) => {
+        console.error('Failed to send approval notification', err);
+      });
+    }
 
     // Feedback generation is a best-effort side effect of completion. It runs
     // after the appointment transaction has committed and must never change the
@@ -828,17 +907,29 @@ export class AppointmentService {
       return appointment; // Idempotent
     }
 
-    const updated = await prisma.appointment.update({
-      where: { id: appointmentId },
-      data: {
-        confirmationStatus: CustomerConfirmationStatus.CONFIRMED,
-        confirmedById: userId,
-        confirmationMethod: 'STAFF',
-      },
-      include: { customer: true }
-    });
+    const now = new Date();
+    // Conditional update so concurrent staff/customer acknowledgements cannot
+    // double-apply or produce duplicate reconciliation work.
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.appointment.updateMany({
+        where: {
+          id: appointmentId,
+          confirmationStatus: { not: CustomerConfirmationStatus.CONFIRMED },
+        },
+        data: {
+          confirmationStatus: CustomerConfirmationStatus.CONFIRMED,
+          confirmedById: userId,
+          confirmationMethod: 'STAFF',
+          customerConfirmedAt: now,
+        },
+      });
 
-    return updated;
+      if (claimed.count === 1) {
+        await appointmentReminderService.onCustomerConfirmed(tx, appointmentId, 'STAFF');
+      }
+
+      return tx.appointment.findUnique({ where: { id: appointmentId }, include: { customer: true } });
+    });
   }
 
   /**
@@ -1096,6 +1187,15 @@ export class AppointmentService {
         tx
       );
 
+      // Cancel pending reminders, cancel any open follow-up, and revoke the
+      // customer self-service link. Sent history is preserved.
+      await appointmentReminderService.onAppointmentIneligible(
+        tx,
+        appointmentId,
+        `Appointment cancelled: ${reason || 'business user'}`
+      );
+      await appointmentActionTokenService.revokeForAppointment(tx, appointmentId);
+
       return updatedAppt;
     });
 
@@ -1193,6 +1293,15 @@ export class AppointmentService {
         tx
       );
 
+      // Reconcile reminders for the new schedule: cancel unsent jobs from the old
+      // schedule (schedule versioning prevents stale sends), rebuild for the new
+      // start time, and cancel any open follow-up tied to the old schedule.
+      await appointmentReminderService.cancelOpenFollowUps(tx, appointmentId, 'Appointment rescheduled');
+      await appointmentReminderService.scheduleForAppointment(tx, appointmentId, {
+        reason: 'Appointment rescheduled',
+      });
+      await appointmentActionTokenService.extendExpiryForAppointment(tx, appointmentId, newEndTime);
+
       return updatedAppt;
     });
 
@@ -1270,8 +1379,9 @@ export class AppointmentService {
           appointmentId,
           statusFrom: appointment.status,
           statusTo: appointment.status,
-          actorId: customerId,
-          actorType: AppointmentActorType.USER,
+          // Customer-initiated through the self-service link: no User actor.
+          actorId: null,
+          actorType: AppointmentActorType.SYSTEM,
           reason: reason || 'Customer rescheduled',
         }
       });
@@ -1279,7 +1389,7 @@ export class AppointmentService {
       await auditLogService.createAuditLog(
         {
           businessId,
-          actorId: customerId,
+          actorId: null,
           action: 'APPOINTMENT_RESCHEDULED_BY_CUSTOMER',
           entityType: 'Appointment',
           entityId: appointmentId,
@@ -1288,6 +1398,13 @@ export class AppointmentService {
         },
         tx
       );
+
+      // Reconcile reminders/follow-ups for the new schedule (see business path).
+      await appointmentReminderService.cancelOpenFollowUps(tx, appointmentId, 'Appointment rescheduled');
+      await appointmentReminderService.scheduleForAppointment(tx, appointmentId, {
+        reason: 'Appointment rescheduled',
+      });
+      await appointmentActionTokenService.extendExpiryForAppointment(tx, appointmentId, newEndTime);
 
       return updatedAppt;
     });

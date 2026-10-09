@@ -31,6 +31,23 @@ const envSchema = zod_1.z.object({
     RATE_LIMIT_WINDOW_MS: zod_1.z.coerce.number().int().default(900000),
     RATE_LIMIT_MAX_REQUESTS: zod_1.z.coerce.number().int().default(100),
     SESSION_CLEANUP_INTERVAL_MINUTES: zod_1.z.coerce.number().int().default(60),
+    // SMS provider. Only 'console' is implemented; production delivery is not
+    // enabled until a real provider is added to createSmsProvider().
+    SMS_PROVIDER: zod_1.z.enum(['console']).default('console'),
+    // Durable appointment reminder worker (PostgreSQL-backed, see
+    // src/workers/reminder-worker.ts).
+    REMINDER_WORKER_POLL_INTERVAL_MS: zod_1.z.coerce.number().int().min(500).default(30000),
+    REMINDER_WORKER_BATCH_SIZE: zod_1.z.coerce.number().int().min(1).max(200).default(20),
+    REMINDER_WORKER_LEASE_SECONDS: zod_1.z.coerce.number().int().min(30).default(120),
+    REMINDER_MAX_ATTEMPTS: zod_1.z.coerce.number().int().min(1).max(20).default(5),
+    REMINDER_RETRY_BASE_SECONDS: zod_1.z.coerce.number().int().min(1).default(60),
+    REMINDER_RETRY_MAX_SECONDS: zod_1.z.coerce.number().int().min(1).default(3600),
+    // The worker also runs the existing pending-appointment expiration job so all
+    // background work lives in one durable process.
+    REMINDER_WORKER_RUN_EXPIRATION: zod_1.z.coerce.boolean().default(true),
+    REMINDER_EXPIRATION_INTERVAL_MINUTES: zod_1.z.coerce.number().int().min(1).default(5),
+    /// Optional stable worker identifier used for claim/lease logging.
+    REMINDER_WORKER_ID: zod_1.z.string().optional(),
     CLOUDINARY_URL: zod_1.z.string().optional(),
 });
 let env;
@@ -94,6 +111,20 @@ exports.config = {
     },
     session: {
         cleanupIntervalMinutes: env.SESSION_CLEANUP_INTERVAL_MINUTES,
+    },
+    sms: {
+        provider: env.SMS_PROVIDER,
+    },
+    reminderWorker: {
+        pollIntervalMs: env.REMINDER_WORKER_POLL_INTERVAL_MS,
+        batchSize: env.REMINDER_WORKER_BATCH_SIZE,
+        leaseSeconds: env.REMINDER_WORKER_LEASE_SECONDS,
+        maxAttempts: env.REMINDER_MAX_ATTEMPTS,
+        retryBaseSeconds: env.REMINDER_RETRY_BASE_SECONDS,
+        retryMaxSeconds: env.REMINDER_RETRY_MAX_SECONDS,
+        runExpiration: env.REMINDER_WORKER_RUN_EXPIRATION,
+        expirationIntervalMinutes: env.REMINDER_EXPIRATION_INTERVAL_MINUTES,
+        workerId: env.REMINDER_WORKER_ID,
     },
     isProduction: env.NODE_ENV === 'production',
     isDevelopment: env.NODE_ENV === 'development',

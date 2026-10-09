@@ -817,6 +817,46 @@ export class BranchService {
       throw new ApiError(400, 'Booking buffer minutes cannot be negative', ErrorCodes.VALIDATION_ERROR);
     }
 
+    // Confirmation reminder/deadline ordering. The second reminder must land
+    // before the response deadline (positive response window) and never less
+    // than 1 hour before the appointment. The first reminder must not be later
+    // than the second. These are validated against the merged (post-update)
+    // values so a partial update cannot produce an invalid combination.
+    const effectiveFirstReminder =
+      changes.confirmationReminderHours ?? config.confirmationReminderHours;
+    const effectiveSecondReminder =
+      changes.sameDayConfirmationReminderHours ?? config.sameDayConfirmationReminderHours;
+    const effectiveDeadline =
+      changes.confirmationDeadlineHours ?? config.confirmationDeadlineHours;
+
+    if (changes.confirmationReminderHours !== undefined && changes.confirmationReminderHours < 0) {
+      throw new ApiError(400, 'confirmationReminderHours cannot be negative', ErrorCodes.VALIDATION_ERROR);
+    }
+    if (changes.confirmationDeadlineHours !== undefined && changes.confirmationDeadlineHours < 0) {
+      throw new ApiError(400, 'confirmationDeadlineHours cannot be negative', ErrorCodes.VALIDATION_ERROR);
+    }
+    if (effectiveSecondReminder < 1) {
+      throw new ApiError(
+        400,
+        'sameDayConfirmationReminderHours must be at least 1 hour before the appointment',
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+    if (effectiveSecondReminder <= effectiveDeadline) {
+      throw new ApiError(
+        400,
+        'The second reminder must occur before the response deadline so the customer has a positive response window',
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+    if (effectiveFirstReminder < effectiveSecondReminder) {
+      throw new ApiError(
+        400,
+        'confirmationReminderHours must be greater than or equal to sameDayConfirmationReminderHours',
+        ErrorCodes.VALIDATION_ERROR
+      );
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       const updated = await tx.branchBookingConfig.update({
         where: { branchId },

@@ -122,8 +122,18 @@ exports.businessUpdateSchema = zod_1.z.object({
     currency: zod_1.z.string().length(3).optional(),
     timezone: zod_1.z.string().optional(),
     feedbackEnabled: zod_1.z.boolean().optional(),
+    feedbackExpiryMode: zod_1.z.enum(['DAYS_7', 'DAYS_15', 'DAYS_30', 'CUSTOM', 'NEVER']).optional(),
+    feedbackCustomExpiryDays: zod_1.z.number().int().min(1, 'Custom expiry days must be at least 1').max(365, 'Custom expiry days cannot exceed 365').nullable().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
     message: 'At least one field must be provided for update',
+}).refine(data => {
+    if (data.feedbackExpiryMode === 'CUSTOM' && (data.feedbackCustomExpiryDays === null || data.feedbackCustomExpiryDays === undefined)) {
+        return false;
+    }
+    return true;
+}, {
+    message: 'feedbackCustomExpiryDays is required when feedbackExpiryMode is CUSTOM',
+    path: ['feedbackCustomExpiryDays'],
 });
 exports.uploadedImageSchema = zod_1.z.object({
     url: zod_1.z.string().url('A valid image URL is required'),
@@ -298,7 +308,10 @@ exports.branchBookingConfigUpdateSchema = zod_1.z.object({
         customerConfirmationEnabled: zod_1.z.boolean().optional(),
         confirmationReminderHours: zod_1.z.number().int().min(0).optional(),
         confirmationDeadlineHours: zod_1.z.number().int().min(0).optional(),
-        sameDayConfirmationReminderHours: zod_1.z.number().int().min(0).optional(),
+        // Second acknowledgement reminder: at least 1 hour before the appointment.
+        // Cross-field ordering vs. the deadline is enforced in the service against
+        // the merged configuration.
+        sameDayConfirmationReminderHours: zod_1.z.number().int().min(1).optional(),
         pendingAppointmentExpirationMinutes: zod_1.z.number().int().min(0).optional(),
     }).optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
