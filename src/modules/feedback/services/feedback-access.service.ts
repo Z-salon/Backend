@@ -36,6 +36,7 @@ export class FeedbackAccessService {
       include: {
         userRoles: {
           include: {
+            branches: { select: { branchId: true } },
             role: {
               include: {
                 permissions: { include: { permission: true } },
@@ -79,7 +80,18 @@ export class FeedbackAccessService {
       );
     }
 
-    return member;
+    const hasBusinessScope = isOwnerOrAdmin || activeRoles.some((ur) => ur.scopeType === 'BUSINESS');
+    const allowedBranchIds = new Set(
+      activeRoles
+        .filter((ur) => ur.scopeType === 'BRANCH')
+        .flatMap((ur: any) => (ur.branches || []).map((b: any) => b.branchId))
+    );
+
+    return Object.assign(member, {
+      isOwnerOrAdmin,
+      hasBusinessScope,
+      allowedBranchIds,
+    });
   }
 }
 

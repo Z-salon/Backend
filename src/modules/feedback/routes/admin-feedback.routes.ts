@@ -7,9 +7,138 @@ import { bodyValidator } from '../../../utils/body-validator';
 import {
   feedbackCategoryCreateSchema,
   feedbackCategoryUpdateSchema,
+  feedbackSettingsUpdateSchema,
 } from '../validation/feedback.schemas';
 
 const router = Router();
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/feedback/settings:
+ *   get:
+ *     tags: [Feedback]
+ *     summary: Get feedback settings for a business (OWNER/ADMIN only)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Feedback settings retrieved }
+ *       401: { description: Authentication required }
+ *       403: { description: Insufficient permissions }
+ */
+router.get(
+  ['/businesses/:businessId/feedback/settings', '/businesses/:businessId/feedback-settings'],
+  authenticate,
+  requireBusinessMembership,
+  feedbackAdminController.getSettings.bind(feedbackAdminController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/feedback/settings:
+ *   patch:
+ *     tags: [Feedback]
+ *     summary: Update feedback settings for a business (OWNER/ADMIN only)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               feedbackEnabled: { type: boolean }
+ *               feedbackExpiryMode: { type: string, enum: [DAYS_7, DAYS_15, DAYS_30, CUSTOM, NEVER] }
+ *               feedbackCustomExpiryDays: { type: integer, minimum: 1, maximum: 365, nullable: true }
+ *     responses:
+ *       200: { description: Feedback settings updated }
+ *       400: { description: Invalid settings configuration }
+ *       401: { description: Authentication required }
+ *       403: { description: Insufficient permissions }
+ */
+router.patch(
+  ['/businesses/:businessId/feedback/settings', '/businesses/:businessId/feedback-settings'],
+  authenticate,
+  requireBusinessMembership,
+  bodyValidator(feedbackSettingsUpdateSchema),
+  feedbackAdminController.updateSettings.bind(feedbackAdminController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/feedback-request:
+ *   get:
+ *     tags: [Feedback]
+ *     summary: Get feedback request status and shareable link for an appointment
+ *     description: >
+ *       Authorized endpoint to view feedback status, link, and QR code for an appointment.
+ *       Viewing this endpoint never creates a new request or rotates existing tokens.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Appointment feedback request retrieved }
+ *       401: { description: Authentication required }
+ *       403: { description: Insufficient permissions or branch access denied }
+ *       404: { description: Request not found }
+ */
+router.get(
+  '/businesses/:businessId/appointments/:appointmentId/feedback-request',
+  authenticate,
+  requireBusinessMembership,
+  feedbackAdminController.getAppointmentFeedbackRequest.bind(feedbackAdminController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/feedback-request:
+ *   post:
+ *     tags: [Feedback]
+ *     summary: Ensure/create feedback request for a completed appointment (Idempotent)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Feedback request ensured }
+ *       400: { description: Appointment not eligible or feedback disabled }
+ *       401: { description: Authentication required }
+ *       403: { description: Insufficient permissions }
+ */
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/feedback-request',
+  authenticate,
+  requireBusinessMembership,
+  feedbackAdminController.ensureAppointmentFeedbackRequest.bind(feedbackAdminController)
+);
+
+/**
+ * @openapi
+ * /api/v1/businesses/{businessId}/appointments/{appointmentId}/feedback-request/revoke:
+ *   post:
+ *     tags: [Feedback]
+ *     summary: Revoke an appointment feedback request
+ *     description: Invalidate an active feedback request so the customer can no longer submit feedback.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: businessId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: path, name: appointmentId, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Feedback request revoked }
+ *       401: { description: Authentication required }
+ *       403: { description: Insufficient permissions }
+ *       404: { description: Request not found }
+ *       409: { description: Request already submitted }
+ */
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/feedback-request/revoke',
+  authenticate,
+  requireBusinessMembership,
+  feedbackAdminController.revokeAppointmentFeedbackRequest.bind(feedbackAdminController)
+);
 
 /**
  * @openapi

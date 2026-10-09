@@ -38,6 +38,7 @@ class OtpService {
             });
             yield (0, sms_service_1.sendOtpSms)(normalizedPhone, otp);
             yield this.incrementRateLimitCounters(normalizedPhone, ip);
+            return { otp };
         });
     }
     verifyOtp(phone, otp, purpose) {

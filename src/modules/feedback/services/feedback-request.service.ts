@@ -1,12 +1,21 @@
-import { FeedbackCategory, Prisma } from '@prisma/client';
+import { createHash } from 'crypto';
+import { FeedbackCategory, FeedbackExpiryMode, Prisma } from '@prisma/client';
 import { prisma } from '../../../libs/prisma';
 import { ApiError, ErrorCodes } from '../../../utils/api-error';
 import { auditLogService } from '../../business/services/audit-log.service';
-import { generateFeedbackToken, hashFeedbackToken, buildFeedbackUrl } from '../../../utils/feedback-token';
+import {
+  generateFeedbackToken,
+  hashFeedbackToken,
+  encryptFeedbackToken,
+  decryptFeedbackToken,
+  buildFeedbackUrl,
+  buildFeedbackQrUrl,
+} from '../../../utils/feedback-token';
 import { sendFeedbackRequestSms } from '../../auth/sms/sms.service';
 import { config } from '../../../config/env';
+import { feedbackAccessService } from './feedback-access.service';
 
-/** Feedback links are valid for 7 days after the appointment is completed. */
+/** Default fallback when business settings are not yet set. */
 export const FEEDBACK_EXPIRY_DAYS = 7;
 
 export interface FeedbackResponseInput {
@@ -19,29 +28,73 @@ export interface FeedbackResponseInput {
 export interface SubmitFeedbackInput {
   token: string;
   is_anonymous?: boolean;
+  idempotency_key?: string;
+  idempotencyKey?: string;
   responses: FeedbackResponseInput[];
 }
 
 export class FeedbackRequestService {
+  /**
+   * Calculate effective expiresAt snapshot using business policy and appointment completion time.
+   */
+  calculateExpiresAt(
+    completionTime: Date,
+    mode: FeedbackExpiryMode = 'DAYS_7',
+    customDays: number | null = null
+  ): Date | null {
+    const baseTime = completionTime.getTime();
+    switch (mode) {
+      case 'DAYS_7':
+        return new Date(baseTime + 7 * 24 * 60 * 60 * 1000);
+      case 'DAYS_15':
+        return new Date(baseTime + 15 * 24 * 60 * 60 * 1000);
+      case 'DAYS_30':
+        return new Date(baseTime + 30 * 24 * 60 * 60 * 1000);
+      case 'CUSTOM': {
+        const days = customDays && customDays > 0 ? customDays : 7;
+        return new Date(baseTime + days * 24 * 60 * 60 * 1000);
+      }
+      case 'NEVER':
+        return null;
+      default:
+        return new Date(baseTime + 7 * 24 * 60 * 60 * 1000);
+    }
+  }
+
   /**
    * Create the (single) feedback request for a completed appointment.
    *
    * Idempotent: the UNIQUE(appointmentId) constraint is the source of truth, so
    * concurrent appointment-completion events can never create two requests.
    *
-   * Returns the persisted request together with the raw token so the caller can
-   * build the customer link. The raw token is never persisted or logged.
+   * Reopening an appointment returns the existing request and decodes the existing token
+   * rather than generating a new token or creating duplicate requests.
    */
   async generateFeedbackRequest(appointmentId: string, actorId?: string) {
     const existing = await prisma.feedbackRequest.findUnique({ where: { appointmentId } });
     if (existing) {
-      return { request: existing, rawToken: null as string | null };
+      let rawToken: string | null = null;
+      if (existing.encryptedToken) {
+        try {
+          rawToken = decryptFeedbackToken(existing.encryptedToken);
+        } catch {
+          rawToken = null;
+        }
+      }
+      return { request: existing, rawToken };
     }
 
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
-        business: { select: { id: true, feedbackEnabled: true } },
+        business: {
+          select: {
+            id: true,
+            feedbackEnabled: true,
+            feedbackExpiryMode: true,
+            feedbackCustomExpiryDays: true,
+          },
+        },
         customer: {
           select: {
             id: true,
@@ -78,8 +131,15 @@ export class FeedbackRequestService {
 
     const rawToken = generateFeedbackToken();
     const tokenHash = hashFeedbackToken(rawToken);
+    const encryptedToken = encryptFeedbackToken(rawToken);
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + FEEDBACK_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+
+    const completionTime = appointment.completedAt ?? appointment.actualEnd ?? now;
+    const expiresAt = this.calculateExpiresAt(
+      completionTime,
+      appointment.business.feedbackExpiryMode,
+      appointment.business.feedbackCustomExpiryDays
+    );
 
     let request;
     try {
@@ -89,6 +149,7 @@ export class FeedbackRequestService {
           appointmentId,
           customerId: appointment.customerId,
           tokenHash,
+          encryptedToken,
           sentAt: now,
           expiresAt,
           status: 'PENDING',
@@ -99,7 +160,15 @@ export class FeedbackRequestService {
         // Another worker won the race — reuse the request it created.
         const winner = await prisma.feedbackRequest.findUnique({ where: { appointmentId } });
         if (winner) {
-          return { request: winner, rawToken: null as string | null };
+          let winnerToken: string | null = null;
+          if (winner.encryptedToken) {
+            try {
+              winnerToken = decryptFeedbackToken(winner.encryptedToken);
+            } catch {
+              winnerToken = null;
+            }
+          }
+          return { request: winner, rawToken: winnerToken };
         }
       }
       throw error;
@@ -114,7 +183,11 @@ export class FeedbackRequestService {
           action: 'FEEDBACK_REQUEST_CREATED',
           entityType: 'FeedbackRequest',
           entityId: request.id,
-          newValues: { appointmentId, customerId: appointment.customerId, expiresAt: expiresAt.toISOString() },
+          newValues: {
+            appointmentId,
+            customerId: appointment.customerId,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          },
         })
         .catch(() => {});
     }
@@ -151,11 +224,16 @@ export class FeedbackRequestService {
       throw new ApiError(404, 'Feedback request not found', ErrorCodes.FEEDBACK_REQUEST_NOT_FOUND);
     }
 
+    if (request.status === 'REVOKED') {
+      throw new ApiError(410, 'This feedback link has been revoked', ErrorCodes.FEEDBACK_REQUEST_REVOKED);
+    }
+
     if (request.status === 'SUBMITTED') {
       throw new ApiError(409, 'Feedback has already been submitted', ErrorCodes.FEEDBACK_ALREADY_SUBMITTED);
     }
 
-    if (request.status === 'EXPIRED' || request.expiresAt <= new Date()) {
+    const isExpired = request.status === 'EXPIRED' || (request.expiresAt !== null && request.expiresAt <= new Date());
+    if (isExpired) {
       if (request.status === 'PENDING') {
         await prisma.feedbackRequest
           .update({ where: { id: request.id }, data: { status: 'EXPIRED' } })
@@ -259,13 +337,90 @@ export class FeedbackRequestService {
   }
 
   /**
+   * Compute a deterministic hash for checking request body idempotency.
+   */
+  computePayloadFingerprint(isAnonymous: boolean, responses: FeedbackResponseInput[]): string {
+    const sorted = [...responses].sort((a, b) => a.category_id.localeCompare(b.category_id));
+    const canonical = JSON.stringify({ isAnonymous, responses: sorted });
+    return createHash('sha256').update(canonical).digest('hex');
+  }
+
+  /**
    * Validate every response, then create the submission + responses + request
-   * status transition atomically.
+   * status transition atomically. Supports client idempotency keys.
    */
   async submitFeedback(input: SubmitFeedbackInput) {
-    const request = await this.loadPendingRequestByToken(input.token);
+    if (!input.token) {
+      throw new ApiError(400, 'Feedback token is required', ErrorCodes.VALIDATION_ERROR);
+    }
+
+    const tokenHash = hashFeedbackToken(input.token);
+    const request = await prisma.feedbackRequest.findUnique({
+      where: { tokenHash },
+      include: {
+        appointment: { select: { id: true, status: true, branchId: true, createdById: true } },
+        business: { select: { id: true, name: true, owner_id: true } },
+        submission: true,
+      },
+    });
+
+    if (!request) {
+      throw new ApiError(404, 'Feedback request not found', ErrorCodes.FEEDBACK_REQUEST_NOT_FOUND);
+    }
+
+    if (request.status === 'REVOKED') {
+      throw new ApiError(410, 'This feedback link has been revoked', ErrorCodes.FEEDBACK_REQUEST_REVOKED);
+    }
 
     const isAnonymous = input.is_anonymous === true;
+    const idempotencyKey = input.idempotency_key || input.idempotencyKey;
+    const payloadHash = this.computePayloadFingerprint(isAnonymous, input.responses);
+
+    // If already submitted, check for an idempotent replay
+    if (request.status === 'SUBMITTED' || request.submission) {
+      const existingSubmission =
+        request.submission || (await prisma.feedbackSubmission.findUnique({ where: { feedbackRequestId: request.id } }));
+
+      if (idempotencyKey && existingSubmission) {
+        if (existingSubmission.idempotencyKey === idempotencyKey) {
+          if (existingSubmission.requestPayloadHash === payloadHash) {
+            // Replay identical request with identical idempotency key -> return existing result
+            return {
+              submission_id: existingSubmission.id,
+              is_anonymous: existingSubmission.isAnonymous,
+              submitted_at: existingSubmission.submittedAt,
+            };
+          } else {
+            // Key reused with different payload -> reject
+            throw new ApiError(
+              422,
+              'Idempotency key reused with different payload',
+              ErrorCodes.IDEMPOTENCY_CONFLICT
+            );
+          }
+        }
+      }
+      throw new ApiError(409, 'Feedback has already been submitted', ErrorCodes.FEEDBACK_ALREADY_SUBMITTED);
+    }
+
+    const now = new Date();
+
+    if (request.status === 'EXPIRED' || (request.expiresAt !== null && request.expiresAt <= now)) {
+      if (request.status === 'PENDING') {
+        await prisma.feedbackRequest
+          .update({ where: { id: request.id }, data: { status: 'EXPIRED' } })
+          .catch(() => {});
+      }
+      throw new ApiError(410, 'This feedback link has expired', ErrorCodes.FEEDBACK_REQUEST_EXPIRED);
+    }
+
+    if (request.appointment.status !== 'COMPLETED') {
+      throw new ApiError(
+        409,
+        'Feedback is not available for this appointment',
+        ErrorCodes.FEEDBACK_NOT_AVAILABLE
+      );
+    }
 
     // Reject duplicate category answers up front for a clear 400.
     const categoryIds = input.responses.map((response) => response.category_id);
@@ -309,8 +464,6 @@ export class FeedbackRequestService {
       };
     });
 
-    const now = new Date();
-
     const submission = await prisma.$transaction(async (tx) => {
       const current = await tx.feedbackRequest.findUnique({
         where: { id: request.id },
@@ -321,11 +474,15 @@ export class FeedbackRequestService {
         throw new ApiError(404, 'Feedback request not found', ErrorCodes.FEEDBACK_REQUEST_NOT_FOUND);
       }
 
+      if (current.status === 'REVOKED') {
+        throw new ApiError(410, 'This feedback link has been revoked', ErrorCodes.FEEDBACK_REQUEST_REVOKED);
+      }
+
       if (current.status === 'SUBMITTED') {
         throw new ApiError(409, 'Feedback has already been submitted', ErrorCodes.FEEDBACK_ALREADY_SUBMITTED);
       }
 
-      if (current.status !== 'PENDING' || current.expiresAt <= now) {
+      if (current.status !== 'PENDING' || (current.expiresAt !== null && current.expiresAt <= now)) {
         throw new ApiError(410, 'This feedback link has expired', ErrorCodes.FEEDBACK_REQUEST_EXPIRED);
       }
 
@@ -343,6 +500,8 @@ export class FeedbackRequestService {
       const created = await tx.feedbackSubmission.create({
         data: {
           feedbackRequestId: current.id,
+          idempotencyKey: idempotencyKey ?? null,
+          requestPayloadHash: payloadHash,
           isAnonymous,
           submittedAt: now,
         },
@@ -358,9 +517,7 @@ export class FeedbackRequestService {
       return created;
     });
 
-    // Audit as a customer-initiated event. The AuditLog requires a real user
-    // actor, so we attribute it to the appointment creator or business owner and
-    // mark the actor type explicitly. No feedback text is duplicated here.
+    // Audit as a customer-initiated event.
     const actorId = request.appointment.createdById ?? request.business.owner_id;
     await auditLogService
       .createAuditLog({
@@ -377,6 +534,159 @@ export class FeedbackRequestService {
       submission_id: submission.id,
       is_anonymous: submission.isAnonymous,
       submitted_at: submission.submittedAt,
+    };
+  }
+
+  /**
+   * Retrieve existing feedback request and shareable link for an appointment.
+   * OWNER/ADMIN only, or FEEDBACK_VIEW, subject to branch scope.
+   * Reopening does NOT generate a new token or create duplicate requests.
+   */
+  async getAppointmentFeedbackRequest(businessId: string, appointmentId: string, userId: string) {
+    const access = await feedbackAccessService.assertFeedbackAccess(businessId, userId, 'FEEDBACK_VIEW');
+
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, businessId },
+      select: { id: true, branchId: true },
+    });
+
+    if (!appointment) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.APPOINTMENT_NOT_FOUND);
+    }
+
+    if (!access.hasBusinessScope && !access.allowedBranchIds.has(appointment.branchId)) {
+      throw new ApiError(403, 'Access denied to this branch', ErrorCodes.FORBIDDEN);
+    }
+
+    const request = await prisma.feedbackRequest.findUnique({
+      where: { appointmentId },
+      include: {
+        submission: {
+          select: { id: true, submittedAt: true, isAnonymous: true },
+        },
+      },
+    });
+
+    if (!request) {
+      throw new ApiError(404, 'Feedback request not found for this appointment', ErrorCodes.FEEDBACK_REQUEST_NOT_FOUND);
+    }
+
+    const now = new Date();
+    let effectiveStatus = request.status;
+    if (request.status === 'PENDING' && request.expiresAt !== null && request.expiresAt <= now) {
+      effectiveStatus = 'EXPIRED';
+    }
+
+    let feedbackUrl: string | null = null;
+    let qrCodeUrl: string | null = null;
+
+    if (request.encryptedToken) {
+      try {
+        const rawToken = decryptFeedbackToken(request.encryptedToken);
+        feedbackUrl = buildFeedbackUrl(config.frontendUrl, rawToken);
+        qrCodeUrl = buildFeedbackQrUrl(feedbackUrl);
+      } catch {
+        feedbackUrl = null;
+        qrCodeUrl = null;
+      }
+    }
+
+    return {
+      id: request.id,
+      appointment_id: request.appointmentId,
+      customer_id: request.customerId,
+      status: effectiveStatus,
+      sent_at: request.sentAt,
+      expires_at: request.expiresAt,
+      url: feedbackUrl,
+      qr_code_url: qrCodeUrl,
+      is_submitted: request.status === 'SUBMITTED',
+      is_revoked: request.status === 'REVOKED',
+      is_expired: effectiveStatus === 'EXPIRED',
+      submission: request.submission
+        ? {
+            id: request.submission.id,
+            submitted_at: request.submission.submittedAt,
+            is_anonymous: request.submission.isAnonymous,
+          }
+        : null,
+      created_at: request.createdAt,
+      updated_at: request.updatedAt,
+    };
+  }
+
+  /**
+   * Revoke an active feedback request for an appointment.
+   * Terminal state: cannot be submitted once revoked.
+   */
+  async revokeFeedbackRequest(businessId: string, appointmentId: string, userId: string) {
+    const access = await feedbackAccessService.assertFeedbackAccess(businessId, userId, 'FEEDBACK_MANAGE');
+
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, businessId },
+      select: { id: true, branchId: true },
+    });
+
+    if (!appointment) {
+      throw new ApiError(404, 'Appointment not found', ErrorCodes.APPOINTMENT_NOT_FOUND);
+    }
+
+    if (!access.hasBusinessScope && !access.allowedBranchIds.has(appointment.branchId)) {
+      throw new ApiError(403, 'Access denied to this branch', ErrorCodes.FORBIDDEN);
+    }
+
+    const request = await prisma.feedbackRequest.findUnique({
+      where: { appointmentId },
+    });
+
+    if (!request) {
+      throw new ApiError(404, 'Feedback request not found for this appointment', ErrorCodes.FEEDBACK_REQUEST_NOT_FOUND);
+    }
+
+    if (request.status === 'SUBMITTED') {
+      throw new ApiError(
+        409,
+        'Cannot revoke a feedback request that has already been submitted',
+        ErrorCodes.CONFLICT
+      );
+    }
+
+    if (request.status === 'REVOKED') {
+      return {
+        id: request.id,
+        appointment_id: request.appointmentId,
+        status: 'REVOKED',
+        updated_at: request.updatedAt,
+      };
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const res = await tx.feedbackRequest.update({
+        where: { id: request.id },
+        data: { status: 'REVOKED' },
+      });
+
+      await auditLogService.createAuditLog(
+        {
+          businessId,
+          actorId: userId,
+          action: 'FEEDBACK_REQUEST_REVOKED',
+          entityType: 'FeedbackRequest',
+          entityId: request.id,
+          oldValues: { status: request.status },
+          newValues: { status: 'REVOKED' },
+        },
+        tx
+      );
+
+      return res;
+    });
+
+    return {
+      id: updated.id,
+      appointment_id: updated.appointmentId,
+      status: updated.status,
+      updated_at: updated.updatedAt,
     };
   }
 }

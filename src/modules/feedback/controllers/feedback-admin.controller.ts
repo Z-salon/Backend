@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { feedbackAdminService } from '../services/feedback-admin.service';
+import { feedbackRequestService } from '../services/feedback-request.service';
 import { successResponse } from '../../../utils/api-response';
 
 function parseDate(value: unknown): Date | undefined {
@@ -37,6 +38,62 @@ export class FeedbackAdminController {
       const userId = req.auth!.userId;
       const data = await feedbackAdminService.getFeedbackDetail(businessId, userId, submissionId);
       res.json(successResponse('Feedback retrieved', data));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getSettings(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId } = req.params;
+      const userId = req.auth!.userId;
+      const data = await feedbackAdminService.getFeedbackSettings(businessId, userId);
+      res.json(successResponse('Feedback settings retrieved', data));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateSettings(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId } = req.params;
+      const userId = req.auth!.userId;
+      const data = await feedbackAdminService.updateFeedbackSettings(businessId, userId, req.body);
+      res.json(successResponse('Feedback settings updated', data));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getAppointmentFeedbackRequest(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId, appointmentId } = req.params;
+      const userId = req.auth!.userId;
+      const data = await feedbackRequestService.getAppointmentFeedbackRequest(businessId, appointmentId, userId);
+      res.json(successResponse('Appointment feedback request retrieved', data));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async ensureAppointmentFeedbackRequest(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId, appointmentId } = req.params;
+      const userId = req.auth!.userId;
+      await feedbackRequestService.generateFeedbackRequest(appointmentId, userId);
+      const data = await feedbackRequestService.getAppointmentFeedbackRequest(businessId, appointmentId, userId);
+      res.status(200).json(successResponse('Appointment feedback request ensured', data));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async revokeAppointmentFeedbackRequest(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { businessId, appointmentId } = req.params;
+      const userId = req.auth!.userId;
+      const data = await feedbackRequestService.revokeFeedbackRequest(businessId, appointmentId, userId);
+      res.json(successResponse('Appointment feedback request revoked', data));
     } catch (error) {
       next(error);
     }

@@ -18,6 +18,7 @@ exports.sendAppointmentCancellationSms = sendAppointmentCancellationSms;
 exports.sendRefundApprovedSms = sendRefundApprovedSms;
 exports.sendRefundRejectedSms = sendRefundRejectedSms;
 exports.buildConfirmationUrl = buildConfirmationUrl;
+exports.sendFeedbackRequestSms = sendFeedbackRequestSms;
 const console_sms_provider_1 = require("./console-sms.provider");
 let smsProvider;
 function getSmsProvider() {
@@ -88,4 +89,14 @@ function sendRefundRejectedSms(phone, scheduledStart, rejectionReason) {
  */
 function buildConfirmationUrl(frontendBaseUrl, token) {
     return `${frontendBaseUrl}/appointments/confirm/${token}`;
+}
+/**
+ * Notify a customer that they can leave feedback for a completed appointment.
+ * Best-effort: callers must never let a failure here affect appointment state.
+ */
+function sendFeedbackRequestSms(phone, feedbackUrl) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const provider = getSmsProvider();
+        yield provider.sendMessage(phone, `Thank you for visiting us! We'd love to hear your feedback: ${feedbackUrl}`);
+    });
 }

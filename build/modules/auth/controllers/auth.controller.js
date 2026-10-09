@@ -21,8 +21,8 @@ class AuthController {
                 const { phone, purpose } = req.body;
                 const ip = req.ip || req.socket.remoteAddress;
                 const userAgent = req.get('user-agent');
-                yield otp_service_1.otpService.requestOtp(phone, purpose, ip, userAgent);
-                res.json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
+                const { otp } = yield otp_service_1.otpService.requestOtp(phone, purpose, ip, userAgent);
+                res.json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.', { otp }));
             }
             catch (error) {
                 next(error);
@@ -45,8 +45,8 @@ class AuthController {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 const { phone, password, business } = req.body;
-                yield auth_service_1.authService.register({ phone, password, business });
-                res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
+                const { otp } = yield auth_service_1.authService.register({ phone, password, business });
+                res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.', { otp }));
             }
             catch (error) {
                 next(error);
@@ -58,8 +58,8 @@ class AuthController {
             try {
                 const { password } = req.body;
                 const { invitationToken } = req.params;
-                yield auth_service_1.authService.registerInvitation(invitationToken, { password });
-                res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
+                const { otp } = yield auth_service_1.authService.registerInvitation(invitationToken, { password });
+                res.status(201).json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.', { otp }));
             }
             catch (error) {
                 next(error);
@@ -240,8 +240,8 @@ class AuthController {
                 const { phone, purpose } = req.body;
                 const ip = req.ip || req.socket.remoteAddress;
                 const userAgent = req.get('user-agent');
-                yield otp_service_1.otpService.requestOtp(phone, purpose, ip, userAgent);
-                res.json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.'));
+                const { otp } = yield otp_service_1.otpService.requestOtp(phone, purpose, ip, userAgent);
+                res.json((0, api_response_1.successResponse)('If this phone number is eligible, a verification code has been sent.', { otp }));
             }
             catch (error) {
                 next(error);

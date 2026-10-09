@@ -8,6 +8,8 @@ export interface BusinessUpdateInput {
   currency?: string;
   timezone?: string;
   feedbackEnabled?: boolean;
+  feedbackExpiryMode?: 'DAYS_7' | 'DAYS_15' | 'DAYS_30' | 'CUSTOM' | 'NEVER';
+  feedbackCustomExpiryDays?: number | null;
 }
 
 export interface BrandingUpdateInput {
@@ -32,6 +34,8 @@ export interface BusinessResponse {
   timezone: string;
   status: string;
   feedbackEnabled: boolean;
+  feedbackExpiryMode: 'DAYS_7' | 'DAYS_15' | 'DAYS_30' | 'CUSTOM' | 'NEVER';
+  feedbackCustomExpiryDays: number | null;
   logoUrl: string | null;
   coverImageUrl: string | null;
   primaryColor: string | null;
@@ -50,7 +54,7 @@ export interface BusinessResponse {
   updatedAt: Date;
 }
 
-const ALLOWED_BUSINESS_UPDATE_FIELDS = ['name', 'currency', 'timezone', 'feedbackEnabled'];
+const ALLOWED_BUSINESS_UPDATE_FIELDS = ['name', 'currency', 'timezone', 'feedbackEnabled', 'feedbackExpiryMode', 'feedbackCustomExpiryDays'];
 const ALLOWED_BRANDING_FIELDS = [
   'primaryColor',
   'secondaryColor',
@@ -144,6 +148,22 @@ export class BusinessConfigurationService {
 
     if (changes.timezone) {
       this.validateTimezone(changes.timezone);
+    }
+
+    if (changes.feedbackExpiryMode !== undefined || changes.feedbackCustomExpiryDays !== undefined) {
+      const mode = changes.feedbackExpiryMode ?? business.feedbackExpiryMode;
+      const validModes = ['DAYS_7', 'DAYS_15', 'DAYS_30', 'CUSTOM', 'NEVER'];
+      if (!validModes.includes(mode)) {
+        throw new ApiError(400, `Invalid feedbackExpiryMode. Must be one of ${validModes.join(', ')}`, ErrorCodes.VALIDATION_ERROR);
+      }
+      if (mode === 'CUSTOM') {
+        const days = changes.feedbackCustomExpiryDays !== undefined ? changes.feedbackCustomExpiryDays : business.feedbackCustomExpiryDays;
+        if (!days || !Number.isInteger(days) || days < 1 || days > 365) {
+          throw new ApiError(400, 'feedbackCustomExpiryDays must be an integer between 1 and 365 when mode is CUSTOM', ErrorCodes.VALIDATION_ERROR);
+        }
+      } else {
+        changes.feedbackCustomExpiryDays = null;
+      }
     }
 
     const updatedBusiness = await prisma.$transaction(async (tx) => {
@@ -471,6 +491,8 @@ export class BusinessConfigurationService {
       timezone: business.timezone,
       status: business.status,
       feedbackEnabled: business.feedbackEnabled,
+      feedbackExpiryMode: business.feedbackExpiryMode,
+      feedbackCustomExpiryDays: business.feedbackCustomExpiryDays,
       // Provide branch information if loaded
       ...(business.branches && business.branches.length > 0 ? {
         branch: {

@@ -2,8 +2,8 @@ import { prisma } from '../src/libs/prisma';
 import { feedbackRequestService } from '../src/modules/feedback/services/feedback-request.service';
 import { feedbackCategoryService } from '../src/modules/feedback/services/feedback-category.service';
 import { feedbackAdminService } from '../src/modules/feedback/services/feedback-admin.service';
-import { generateFeedbackToken, hashFeedbackToken } from '../src/utils/feedback-token';
-import { FeedbackCategoryType } from '@prisma/client';
+import { generateFeedbackToken, hashFeedbackToken, encryptFeedbackToken, decryptFeedbackToken } from '../src/utils/feedback-token';
+import { FeedbackCategoryType, FeedbackExpiryMode } from '@prisma/client';
 
 let testCount = 0;
 let passCount = 0;
@@ -81,7 +81,7 @@ async function cleanup() {
   await prisma.user.deleteMany({ where: { phone: { contains: TAG } } });
 }
 
-async function mkAppointment(businessId: string, branchId: string, customerId: string, serviceId: string, status: any) {
+async function mkAppointment(businessId: string, branchId: string, customerId: string, serviceId: string, status: any, completedAt?: Date) {
   return prisma.appointment.create({
     data: {
       businessId,
@@ -91,6 +91,8 @@ async function mkAppointment(businessId: string, branchId: string, customerId: s
       scheduledStart: new Date('2026-10-15T10:00:00.000Z'),
       scheduledEnd: new Date('2026-10-15T11:00:00.000Z'),
       status,
+      completedAt: completedAt ?? (status === 'COMPLETED' ? new Date() : null),
+      actualEnd: completedAt ?? (status === 'COMPLETED' ? new Date() : null),
       totalAmount: 100,
       bookingSource: 'STAFF',
     },
@@ -98,7 +100,7 @@ async function mkAppointment(businessId: string, branchId: string, customerId: s
 }
 
 /** Create a PENDING feedback request directly with a known raw token. */
-async function makeRequest(appointment: any, overrides: { expiresAt?: Date; status?: any } = {}) {
+async function makeRequest(appointment: any, overrides: { expiresAt?: Date | null; status?: any } = {}) {
   const rawToken = generateFeedbackToken();
   const request = await prisma.feedbackRequest.create({
     data: {
@@ -106,8 +108,9 @@ async function makeRequest(appointment: any, overrides: { expiresAt?: Date; stat
       appointmentId: appointment.id,
       customerId: appointment.customerId,
       tokenHash: hashFeedbackToken(rawToken),
+      encryptedToken: encryptFeedbackToken(rawToken),
       sentAt: new Date(),
-      expiresAt: overrides.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: overrides.expiresAt !== undefined ? overrides.expiresAt : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       status: overrides.status ?? 'PENDING',
     },
   });
@@ -284,7 +287,7 @@ async function runTests() {
   assert(generated.request.status === 'PENDING' && !!generated.rawToken, '11. Completed appointment generates a PENDING request with a raw token');
   assert(generated.request.tokenHash === hashFeedbackToken(generated.rawToken!), '12. Only the token hash is stored (matches the raw token)');
   assert(generated.request.tokenHash !== generated.rawToken, '13. Raw token is NOT stored in plaintext');
-  const ttlDays = (generated.request.expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  const ttlDays = (generated.request.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
   assert(ttlDays > 6.9 && ttlDays < 7.1, '14. Expiration is set to ~7 days');
 
   const regenerate = await feedbackRequestService.generateFeedbackRequest(completedApt.id, f.owner.id);
@@ -505,6 +508,179 @@ async function runTests() {
 
   const submittedAudits = await prisma.auditLog.count({ where: { businessId: f.business.id, action: 'FEEDBACK_SUBMITTED' } });
   assert(submittedAudits >= 1, '46. FEEDBACK_SUBMITTED audit events are recorded');
+
+  // ============================================================
+  // Phase 3 & 6.A: Configurable Expiration & Settings
+  // ============================================================
+  console.log('— Configurable Expiration & Settings —');
+
+  const settings0 = await feedbackAdminService.getFeedbackSettings(f.business.id, f.owner.id);
+  assert(settings0.feedback_expiry_mode === 'DAYS_7', '47. Default expiry mode is DAYS_7');
+
+  const settings15 = await feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+    feedbackExpiryMode: 'DAYS_15',
+  });
+  assert(settings15.feedback_expiry_mode === 'DAYS_15', '48. Expiry mode updated to DAYS_15');
+
+  const apt15 = await mkAppointment(f.business.id, f.branch.id, f.customer.id, f.service.id, 'COMPLETED');
+  const req15 = await feedbackRequestService.generateFeedbackRequest(apt15.id, f.owner.id);
+  const ttl15 = (req15.request.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  assert(ttl15 > 14.8 && ttl15 < 15.2, '49. DAYS_15 mode calculates expiration ~15 days');
+
+  await feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+    feedbackExpiryMode: 'DAYS_30',
+  });
+  const apt30 = await mkAppointment(f.business.id, f.branch.id, f.customer.id, f.service.id, 'COMPLETED');
+  const req30 = await feedbackRequestService.generateFeedbackRequest(apt30.id, f.owner.id);
+  const ttl30 = (req30.request.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  assert(ttl30 > 29.8 && ttl30 < 30.2, '50. DAYS_30 mode calculates expiration ~30 days');
+
+  await feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+    feedbackExpiryMode: 'CUSTOM',
+    feedbackCustomExpiryDays: 12,
+  });
+  const aptCustom = await mkAppointment(f.business.id, f.branch.id, f.customer.id, f.service.id, 'COMPLETED');
+  const reqCustom = await feedbackRequestService.generateFeedbackRequest(aptCustom.id, f.owner.id);
+  const ttlCustom = (reqCustom.request.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  assert(ttlCustom > 11.8 && ttlCustom < 12.2, '51. CUSTOM mode with 12 days calculates ~12 days');
+
+  await assertThrows(
+    () => feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+      feedbackExpiryMode: 'CUSTOM',
+      feedbackCustomExpiryDays: 0,
+    }),
+    '52. Custom expiry < 1 day is rejected',
+    'between 1 and 365'
+  );
+
+  await assertThrows(
+    () => feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+      feedbackExpiryMode: 'CUSTOM',
+      feedbackCustomExpiryDays: 400,
+    }),
+    '53. Custom expiry > 365 days is rejected',
+    'between 1 and 365'
+  );
+
+  await feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+    feedbackExpiryMode: 'NEVER',
+  });
+  const aptNever = await mkAppointment(f.business.id, f.branch.id, f.customer.id, f.service.id, 'COMPLETED');
+  const reqNever = await feedbackRequestService.generateFeedbackRequest(aptNever.id, f.owner.id);
+  assert(reqNever.request.expiresAt === null, '54. NEVER mode sets expiresAt to null');
+
+  // Changing business setting must NOT retroactively change existing request
+  assert(req15.request.expiresAt !== null, '55. Updating business settings does not change existing request expiry');
+
+  // Completion timestamp calculation: 3 days in the past + 7 days mode = ~4 days remaining
+  await feedbackAdminService.updateFeedbackSettings(f.business.id, f.owner.id, {
+    feedbackExpiryMode: 'DAYS_7',
+  });
+  const pastCompleted = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const aptPast = await mkAppointment(f.business.id, f.branch.id, f.customer.id, f.service.id, 'COMPLETED', pastCompleted);
+  const reqPast = await feedbackRequestService.generateFeedbackRequest(aptPast.id, f.owner.id);
+  const ttlPast = (reqPast.request.expiresAt!.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+  assert(ttlPast > 3.8 && ttlPast < 4.2, '56. Expiration is calculated from appointment completion timestamp');
+
+  // Branch manager cannot update feedback settings
+  await assertThrows(
+    () => feedbackAdminService.updateFeedbackSettings(f.business.id, f.manager.id, { feedbackEnabled: false }),
+    '57. BRANCH_MANAGER cannot update feedback settings (403)',
+    'Permission'
+  );
+
+  // ============================================================
+  // Phase 2.2 & 6.B: Token Encryption, Retrieval & Revocation
+  // ============================================================
+  console.log('— Link Retrieval, Token Encryption & Revocation —');
+
+  const shareReq = await feedbackRequestService.getAppointmentFeedbackRequest(f.business.id, aptNever.id, f.owner.id);
+  assert(shareReq.url !== null && shareReq.url.includes(reqNever.rawToken!), '58. getAppointmentFeedbackRequest recovers original URL');
+  assert(shareReq.qr_code_url !== null && shareReq.qr_code_url.includes(encodeURIComponent(shareReq.url!)), '59. Share payload includes valid QR code URL');
+
+  // Re-reading appointment link never changes the token
+  const shareReq2 = await feedbackRequestService.getAppointmentFeedbackRequest(f.business.id, aptNever.id, f.owner.id);
+  assert(shareReq2.url === shareReq.url, '60. Viewing feedback request does not rotate token');
+
+  // Revocation
+  const revokedResult = await feedbackRequestService.revokeFeedbackRequest(f.business.id, aptNever.id, f.owner.id);
+  assert(revokedResult.status === 'REVOKED', '61. Revoking appointment request sets status to REVOKED');
+
+  // Re-revoking is idempotent
+  const revokedAgain = await feedbackRequestService.revokeFeedbackRequest(f.business.id, aptNever.id, f.owner.id);
+  assert(revokedAgain.status === 'REVOKED', '62. Revoking an already revoked request is idempotent');
+
+  // Customer cannot view form or submit on revoked token
+  await assertThrows(
+    () => feedbackRequestService.getFormByToken(reqNever.rawToken!),
+    '63. getFormByToken on revoked link is rejected with 410',
+    'revoked'
+  );
+  await assertThrows(
+    () => feedbackRequestService.submitFeedback({
+      token: reqNever.rawToken!,
+      responses: [{ category_id: f.ratingCategory.id, rating_value: 5 }],
+    }),
+    '64. submitFeedback on revoked link is rejected with 410',
+    'revoked'
+  );
+
+  // Cannot revoke already submitted request
+  await assertThrows(
+    () => feedbackRequestService.revokeFeedbackRequest(f.business.id, sub1.id, f.owner.id),
+    '65. Revoking an already submitted request is rejected (409)',
+    'already been submitted'
+  );
+
+  // ============================================================
+  // Phase 4.3: Submission Idempotency
+  // ============================================================
+  console.log('— Idempotency —');
+
+  const idemApt = await mkAppointment(f.business.id, f.branch.id, f.customer.id, f.service.id, 'COMPLETED');
+  const idemReq = await makeRequest(idemApt);
+  const idemKey = `idem-test-${Date.now()}`;
+
+  const firstSub = await feedbackRequestService.submitFeedback({
+    token: idemReq.rawToken,
+    idempotency_key: idemKey,
+    is_anonymous: false,
+    responses: [{ category_id: f.ratingCategory.id, rating_value: 5 }],
+  });
+  assert(!!firstSub.submission_id, '66. First submission with idempotency key succeeds');
+
+  // Retry with SAME idempotency key and SAME payload succeeds with same submission_id
+  const replaySub = await feedbackRequestService.submitFeedback({
+    token: idemReq.rawToken,
+    idempotency_key: idemKey,
+    is_anonymous: false,
+    responses: [{ category_id: f.ratingCategory.id, rating_value: 5 }],
+  });
+  assert(replaySub.submission_id === firstSub.submission_id, '67. Idempotent retry returns original successful submission');
+
+  // Retry with SAME idempotency key but DIFFERENT payload is rejected
+  await assertThrows(
+    () => feedbackRequestService.submitFeedback({
+      token: idemReq.rawToken,
+      idempotency_key: idemKey,
+      is_anonymous: false,
+      responses: [{ category_id: f.ratingCategory.id, rating_value: 4 }],
+    }),
+    '68. Idempotency key reused with different payload is rejected',
+    'Idempotency key reused'
+  );
+
+  // Retry with DIFFERENT key on already submitted request is rejected with 409
+  await assertThrows(
+    () => feedbackRequestService.submitFeedback({
+      token: idemReq.rawToken,
+      idempotency_key: 'different-key',
+      is_anonymous: false,
+      responses: [{ category_id: f.ratingCategory.id, rating_value: 5 }],
+    }),
+    '69. Different idempotency key on already submitted request returns 409',
+    'already been submitted'
+  );
 
   await cleanup();
   console.log(`\n🎉 All ${passCount} / ${testCount} feedback tests passed!\n`);

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.branchPhoneUpdateSchema = exports.branchPhoneCreateSchema = exports.branchBookingConfigUpdateSchema = exports.branchDateOverrideUpdateSchema = exports.branchDateOverrideCreateSchema = exports.branchWeeklyHoursSchema = exports.branchUpdateSchema = exports.branchCreateSchema = exports.businessBrandingSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
+exports.branchPhoneUpdateSchema = exports.branchPhoneCreateSchema = exports.branchBookingConfigUpdateSchema = exports.branchDateOverrideUpdateSchema = exports.branchDateOverrideCreateSchema = exports.branchWeeklyHoursSchema = exports.branchUpdateSchema = exports.branchCreateSchema = exports.businessBrandingSchema = exports.uploadedImageSchema = exports.businessUpdateSchema = exports.roleAssignmentSchema = exports.rolePermissionSchema = exports.roleUpdateSchema = exports.roleCreateSchema = exports.memberStatusSchema = exports.memberUpdateSchema = exports.invitationAcceptSchema = exports.invitationRegisterSchema = exports.invitationCreateSchema = exports.loginCompleteSchema = exports.resendOtpSchema = exports.changePhoneVerifySchema = exports.changePhoneRequestSchema = exports.changePasswordSchema = exports.resetPasswordSchema = exports.verifyPasswordResetSchema = exports.forgotPasswordSchema = exports.loginSchema = exports.registerVerifySchema = exports.registerSchema = exports.otpVerifySchema = exports.otpRequestSchema = exports.passwordSchema = exports.phoneSchema = void 0;
 const zod_1 = require("zod");
 exports.phoneSchema = zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)');
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
@@ -121,19 +121,21 @@ exports.businessUpdateSchema = zod_1.z.object({
     name: zod_1.z.string().min(1).max(100).optional(),
     currency: zod_1.z.string().length(3).optional(),
     timezone: zod_1.z.string().optional(),
+    feedbackEnabled: zod_1.z.boolean().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
     message: 'At least one field must be provided for update',
 });
+exports.uploadedImageSchema = zod_1.z.object({
+    url: zod_1.z.string().url('A valid image URL is required'),
+    publicId: zod_1.z.string().min(1, 'Public ID is required'),
+});
 exports.businessBrandingSchema = zod_1.z.object({
-    logoUrl: zod_1.z.string().url().nullable().optional(),
-    coverImageUrl: zod_1.z.string().url().nullable().optional(),
+    logo: exports.uploadedImageSchema.nullable().optional(),
+    cover: exports.uploadedImageSchema.nullable().optional(),
     primaryColor: zod_1.z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #FF0000)').nullable().optional(),
     secondaryColor: zod_1.z.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, 'Must be a valid hex color (e.g., #00FF00)').nullable().optional(),
     description: zod_1.z.string().max(1000).nullable().optional(),
     aboutUs: zod_1.z.string().max(5000).nullable().optional(),
-    address: zod_1.z.string().max(500).nullable().optional(),
-    phone: zod_1.z.string().regex(/^\+[1-9]\d{1,14}$/, 'Invalid phone number format. Use E.164 format (e.g., +2519XXXXXXXX)').nullable().optional(),
-    email: zod_1.z.string().email().nullable().optional(),
     website: zod_1.z.string().url().nullable().optional(),
     facebookUrl: zod_1.z.string().url().nullable().optional(),
     instagramUrl: zod_1.z.string().url().nullable().optional(),
@@ -274,17 +276,33 @@ exports.branchDateOverrideUpdateSchema = zod_1.z.object({
     path: ['intervals'],
 });
 exports.branchBookingConfigUpdateSchema = zod_1.z.object({
-    onlineBookingEnabled: zod_1.z.boolean().optional(),
-    walkInEnabled: zod_1.z.boolean().optional(),
-    bookingApprovalRequired: zod_1.z.boolean().optional(),
-    minimumAdvanceBookingMinutes: zod_1.z.number().int().min(0).optional(),
-    maximumAdvanceBookingDays: zod_1.z.number().int().min(1).optional(),
-    cancellationWindowMinutes: zod_1.z.number().int().min(0).optional(),
-    reschedulingEnabled: zod_1.z.boolean().optional(),
-    bookingBufferMinutes: zod_1.z.number().int().min(0).optional(),
-    waitlistEnabled: zod_1.z.boolean().optional(),
+    booking: zod_1.z.object({
+        onlineBookingEnabled: zod_1.z.boolean().optional(),
+        walkInEnabled: zod_1.z.boolean().optional(),
+        bookingApprovalRequired: zod_1.z.boolean().optional(),
+        minimumAdvanceBookingMinutes: zod_1.z.number().int().min(0).optional(),
+        maximumAdvanceBookingDays: zod_1.z.number().int().min(1).optional(),
+        bookingBufferMinutes: zod_1.z.number().int().min(0).optional(),
+        waitlistEnabled: zod_1.z.boolean().optional(),
+    }).optional(),
+    cancellation: zod_1.z.object({
+        cancellationWindowMinutes: zod_1.z.number().int().min(0).optional(),
+        reschedulingEnabled: zod_1.z.boolean().optional(),
+        customerCancellationEnabled: zod_1.z.boolean().optional(),
+        customerCancellationPolicy: zod_1.z.string().optional(),
+        refundPolicyType: zod_1.z.enum(['NO_REFUND', 'FULL_REFUND', 'PERCENTAGE_REFUND']).optional(),
+        refundPercentage: zod_1.z.number().int().min(0).max(100).nullable().optional(),
+        refundDeadlineHours: zod_1.z.number().int().min(0).optional(),
+    }).optional(),
+    confirmation: zod_1.z.object({
+        customerConfirmationEnabled: zod_1.z.boolean().optional(),
+        confirmationReminderHours: zod_1.z.number().int().min(0).optional(),
+        confirmationDeadlineHours: zod_1.z.number().int().min(0).optional(),
+        sameDayConfirmationReminderHours: zod_1.z.number().int().min(0).optional(),
+        pendingAppointmentExpirationMinutes: zod_1.z.number().int().min(0).optional(),
+    }).optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
-    message: 'At least one field must be provided for update',
+    message: 'At least one section must be provided for update',
 });
 // Branch Phone schemas
 exports.branchPhoneCreateSchema = zod_1.z.object({

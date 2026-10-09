@@ -152,6 +152,8 @@ model Business {
 
   // Feedback MVP: master switch for generating feedback requests/notifications
   feedbackEnabled Boolean @default(true)
+  feedbackExpiryMode FeedbackExpiryMode @default(DAYS_7)
+  feedbackCustomExpiryDays Int?
   user      User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
   // Branding
@@ -1247,10 +1249,19 @@ enum FeedbackCategoryType {
   BOOLEAN
 }
 
+enum FeedbackExpiryMode {
+  DAYS_7
+  DAYS_15
+  DAYS_30
+  CUSTOM
+  NEVER
+}
+
 enum FeedbackRequestStatus {
   PENDING
   SUBMITTED
   EXPIRED
+  REVOKED
 }
 
 /// A business-defined question/answer dimension for customer feedback.
@@ -1282,15 +1293,17 @@ model FeedbackCategory {
 }
 
 /// A single-use, tokenised invitation to submit feedback for one completed appointment.
-/// Only the SHA-256 hash of the raw customer token is ever stored.
+/// Only the SHA-256 hash of the raw customer token is ever used for form lookup.
+/// The raw token is stored AES-256-GCM encrypted so authorized admins can retrieve the link.
 model FeedbackRequest {
   id            String                @id @default(uuid())
   businessId    String
   appointmentId String                @unique
   customerId    String
   tokenHash     String                @unique
+  encryptedToken String?
   sentAt        DateTime?
-  expiresAt     DateTime
+  expiresAt     DateTime?
   status        FeedbackRequestStatus @default(PENDING)
 
   createdAt DateTime @default(now())
@@ -1310,17 +1323,20 @@ model FeedbackRequest {
 
 /// One completed customer feedback form. Exactly one submission per request.
 model FeedbackSubmission {
-  id                String   @id @default(uuid())
-  feedbackRequestId String   @unique
-  isAnonymous       Boolean  @default(false)
-  submittedAt       DateTime @default(now())
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  feedbackRequestId  String   @unique
+  idempotencyKey     String?
+  requestPayloadHash String?
+  isAnonymous        Boolean  @default(false)
+  submittedAt        DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   feedbackRequest FeedbackRequest    @relation(fields: [feedbackRequestId], references: [id], onDelete: Cascade)
   responses       FeedbackResponse[]
 
   @@index([feedbackRequestId])
+  @@index([idempotencyKey])
   @@index([isAnonymous])
   @@index([submittedAt])
 }

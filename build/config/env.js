@@ -31,6 +31,7 @@ const envSchema = zod_1.z.object({
     RATE_LIMIT_WINDOW_MS: zod_1.z.coerce.number().int().default(900000),
     RATE_LIMIT_MAX_REQUESTS: zod_1.z.coerce.number().int().default(100),
     SESSION_CLEANUP_INTERVAL_MINUTES: zod_1.z.coerce.number().int().default(60),
+    CLOUDINARY_URL: zod_1.z.string().optional(),
 });
 let env;
 try {
@@ -96,4 +97,5 @@ exports.config = {
     },
     isProduction: env.NODE_ENV === 'production',
     isDevelopment: env.NODE_ENV === 'development',
+    cloudinaryUrl: env.CLOUDINARY_URL,
 };

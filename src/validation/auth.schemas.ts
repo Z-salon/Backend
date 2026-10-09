@@ -145,9 +145,22 @@ export const businessUpdateSchema = z.object({
   currency: z.string().length(3).optional(),
   timezone: z.string().optional(),
   feedbackEnabled: z.boolean().optional(),
+  feedbackExpiryMode: z.enum(['DAYS_7', 'DAYS_15', 'DAYS_30', 'CUSTOM', 'NEVER']).optional(),
+  feedbackCustomExpiryDays: z.number().int().min(1, 'Custom expiry days must be at least 1').max(365, 'Custom expiry days cannot exceed 365').nullable().optional(),
 }).strict().refine(data => Object.keys(data).length > 0, {
   message: 'At least one field must be provided for update',
-});
+}).refine(
+  data => {
+    if (data.feedbackExpiryMode === 'CUSTOM' && (data.feedbackCustomExpiryDays === null || data.feedbackCustomExpiryDays === undefined)) {
+      return false;
+    }
+    return true;
+  },
+  {
+    message: 'feedbackCustomExpiryDays is required when feedbackExpiryMode is CUSTOM',
+    path: ['feedbackCustomExpiryDays'],
+  }
+);
 
 export const uploadedImageSchema = z.object({
   url: z.string().url('A valid image URL is required'),

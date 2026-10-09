@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.swaggerSpec = void 0;
 const swagger_jsdoc_1 = __importDefault(require("swagger-jsdoc"));
-const env_1 = require("./env");
 const swaggerDefinition = {
     openapi: '3.0.0',
     info: {
@@ -13,12 +12,6 @@ const swaggerDefinition = {
         version: '1.0.0',
         description: 'OpenAPI documentation for the Z-Salon backend services.',
     },
-    servers: [
-        {
-            url: `http://localhost:${env_1.config.port}`,
-            description: 'Local development server',
-        },
-    ],
     components: {
         securitySchemes: {
             bearerAuth: {

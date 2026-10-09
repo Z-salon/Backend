@@ -51,7 +51,8 @@ class AuthService {
                     expiresAt: new Date(Date.now() + 30 * 60 * 1000),
                 },
             });
-            yield otp_service_1.otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+            const { otp } = yield otp_service_1.otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+            return { otp };
         });
     }
     registerInvitation(invitationToken, data) {
@@ -170,13 +171,14 @@ class AuthService {
             // ============================================================
             // 12. Request OTP
             // ============================================================
-            yield otp_service_1.otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
+            const { otp } = yield otp_service_1.otpService.requestOtp(normalizedPhone, 'PHONE_VERIFICATION');
             // ============================================================
             // 13. Return
             // ============================================================
             return {
                 message: 'Registration started. Please verify your phone number using the OTP.',
                 phone: normalizedPhone,
+                otp: otp,
             };
         });
     }
