@@ -4,6 +4,28 @@ Base path: `/api/v1/businesses/:businessId`
 
 All staff endpoints require `authenticate` + `requireBusinessMembership` (member of the target business).
 
+## 0. Development-only confirmation link
+
+For local development, when SMS delivery is not configured, an authenticated staff member can request a fresh customer action link:
+
+`POST /api/v1/businesses/:businessId/appointments/:appointmentId/confirmation-link`
+
+This endpoint is disabled in production and returns `404`. It does not send an SMS.
+
+### Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "token": "opaque-token-value",
+    "confirmationUrl": "http://localhost:5173/appointments/confirm/opaque-token-value"
+  }
+}
+```
+
+The frontend can open `confirmationUrl` directly, or use `token` with the customer endpoints below.
+
 ---
 
 ## 1. Get appointment details (incl. reminder/follow-up state)

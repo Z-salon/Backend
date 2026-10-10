@@ -217,6 +217,17 @@ router.post(
 
 // Direct appointment routes (require appointment ID)
 /**
+ * Development-only endpoint for obtaining a customer confirmation link when
+ * testing without a production SMS provider.
+ */
+router.post(
+  '/businesses/:businessId/appointments/:appointmentId/confirmation-link',
+  authenticate,
+  requireBusinessMembership,
+  appointmentController.createConfirmationLink.bind(appointmentController)
+);
+
+/**
  * @openapi
  * /api/v1/businesses/{businessId}/appointments/{appointmentId}:
  *   get:

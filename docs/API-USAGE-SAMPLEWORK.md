@@ -17,7 +17,7 @@ Derived from the routes, validation schemas and services in `src/`. Where Swagge
 {host}/api/v1
 ```
 
-Examples assume `http://localhost:3000/api/v1`.
+Examples assume `http://localhost:5173/api/v1`.
 
 ### 0.2 Authentication
 

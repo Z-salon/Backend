@@ -7,7 +7,7 @@
     "_exporter_id": "z-salon-backend"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "baseUrl", "value": "http://localhost:5173/api/v1", "type": "string" },
     { "key": "accessToken", "value": "", "type": "string" },
     { "key": "businessId", "value": "REPLACE_WITH_BUSINESS_ID", "type": "string" },
     { "key": "branchId", "value": "REPLACE_WITH_BRANCH_ID", "type": "string" },

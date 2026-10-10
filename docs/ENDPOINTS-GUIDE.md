@@ -16,7 +16,7 @@ Where code and Swagger annotations disagree, **the code wins**.
 ```
 
 - `API_PREFIX` defaults to `/api/v1` (env var, see `.env.example`).
-- Examples in this document assume `http://localhost:3000/api/v1`.
+- Examples in this document assume `http://localhost:5173/api/v1`.
 - Health check (no prefix): `GET /health` → `{ "success": true, "message": "OK", "timestamp": "<ISO>" }`
 
 ### 0.2 Authentication — what every request needs

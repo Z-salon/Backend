@@ -786,4 +786,4 @@ All significant feedback events are recorded as audit log entries:
 | Variable | Required | Description |
 | --- | :---: | --- |
 | `FEEDBACK_TOKEN_SECRET` | ❌ | AES encryption key source. Falls back to `JWT_SECRET`. |
-| `FRONTEND_URL` | ❌ | Base URL for feedback links (default: `http://localhost:3000`) |
+| `FRONTEND_URL` | ❌ | Base URL for feedback links (default: `http://localhost:5173`) |

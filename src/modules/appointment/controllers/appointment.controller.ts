@@ -3,8 +3,49 @@ import { appointmentService } from '../services/appointment.service';
 import { successResponse } from '../../../utils/api-response';
 import { normalizePhone } from '../../../utils/phone';
 import { prisma } from '../../../libs/prisma';
+import { appointmentActionTokenService } from '../services/appointment-action-token.service';
+import { buildConfirmationUrl } from '../../auth/sms/sms.service';
+import { config } from '../../../config/env';
 
 export class AppointmentController {
+  /**
+   * Development-only helper for testing the customer confirmation page without
+   * requiring an SMS provider.
+   */
+  async createConfirmationLink(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (config.isProduction) {
+        res.status(404).json({ success: false, message: 'Not found' });
+        return;
+      }
+
+      const businessId = req.params.businessId;
+      const appointmentId = req.params.appointmentId;
+      const userId = req.auth!.userId;
+      const appointment = await prisma.appointment.findUnique({
+        where: { id: appointmentId, businessId },
+        select: { id: true, businessId: true, branchId: true, scheduledEnd: true },
+      });
+
+      if (!appointment) {
+        res.status(404).json({ success: false, message: 'Appointment not found' });
+        return;
+      }
+
+      await appointmentService.verifyAppointmentAccess(businessId, userId, appointment);
+
+      const token = await appointmentActionTokenService.issueToken(prisma, appointment);
+      const confirmationUrl = buildConfirmationUrl(config.frontendUrl, token);
+
+      res.json({
+        success: true,
+        data: { token, confirmationUrl },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /**
    * Create an appointment (online booking by customer)
    */
